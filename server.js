@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
+import WebSocket from 'ws';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,13 +11,16 @@ const env = process.env.KALSHI_ENV === 'demo' ? 'demo' : 'production';
 const BASE = env === 'demo'
   ? 'https://external-api.demo.kalshi.co/trade-api/v2'
   : 'https://external-api.kalshi.com/trade-api/v2';
+const WS_URL = env === 'demo'
+  ? 'wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2'
+  : 'wss://external-api-ws.kalshi.com/trade-api/ws/v2';
 const API_KEY = process.env.KALSHI_API_KEY_ID || '';
 const PRIVATE_KEY = (process.env.KALSHI_PRIVATE_KEY || '').replace(/\\n/g,'\n');
 
-function authHeaders(method, apiPath) {
+function signHeaders(method, fullPath) {
   if (!API_KEY || !PRIVATE_KEY) return {};
   const ts = Date.now().toString();
-  const path = '/trade-api/v2' + apiPath.split('?')[0];
+  const path = fullPath.split('?')[0];
   const data = Buffer.from(ts + method.toUpperCase() + path);
   const signature = crypto.sign('sha256', data, {
     key: PRIVATE_KEY,
@@ -30,6 +34,10 @@ function authHeaders(method, apiPath) {
   };
 }
 
+function authHeaders(method, apiPath) {
+  return signHeaders(method, '/trade-api/v2' + apiPath.split('?')[0]);
+}
+
 async function kget(path, query = {}) {
   const qs = new URLSearchParams(Object.entries(query).filter(([,v]) => v !== undefined && v !== null && v !== '')).toString();
   const apiPath = path + (qs ? `?${qs}` : '');
@@ -40,7 +48,7 @@ async function kget(path, query = {}) {
   return body;
 }
 
-app.get('/api/health', (req,res)=>res.json({ok:true, env, linked:Boolean(API_KEY && PRIVATE_KEY)}));
+app.get('/api/health', (req,res)=>res.json({ok:true, env, linked:Boolean(API_KEY && PRIVATE_KEY), realtime:Boolean(API_KEY && PRIVATE_KEY)}));
 
 app.get('/api/markets', async (req,res)=>{
   try {
@@ -68,7 +76,9 @@ function priceOf(t){
 }
 function aggregateTrades(trades, step){
   const b = new Map();
-  for (const t of trades){
+  // REST trades are generally newest-first. Sort oldest-first so OHLC is correct.
+  const ordered=[...trades].sort((a,b)=>new Date(a.created_time)-new Date(b.created_time));
+  for (const t of ordered){
     const ts = Math.floor(new Date(t.created_time).getTime()/1000);
     const p = priceOf(t); if (!Number.isFinite(ts) || p==null) continue;
     const k = Math.floor(ts/step)*step;
@@ -79,7 +89,7 @@ function aggregateTrades(trades, step){
 }
 function aggregateCandles(candles, step){
   const b = new Map();
-  for(const c of candles){
+  for(const c of [...candles].sort((a,b)=>a.time-b.time)){
     const ts=Number(c.time); const k=Math.floor(ts/step)*step;
     let x=b.get(k); if(!x){x={time:k,open:c.open,high:c.high,low:c.low,close:c.close,volume:c.volume||0};b.set(k,x);} else {x.high=Math.max(x.high,c.high);x.low=Math.min(x.low,c.low);x.close=c.close;x.volume+=(c.volume||0);}
   }
@@ -109,7 +119,6 @@ app.get('/api/chart/:ticker', async (req,res)=>{
       const trades=await allTrades(ticker,qstart,end,40);
       candles=aggregateTrades(trades,step); truncated=qstart>start;
     } else {
-      // Use 1-minute native candles, then aggregate locally to 2/5/10/15m.
       const series=m.series_ticker || String(ticker).split('-')[0];
       try {
         const d=await kget(`/series/${encodeURIComponent(series)}/markets/${encodeURIComponent(ticker)}/candlesticks`,{start_ts:start,end_ts:end,period_interval:1});
@@ -121,6 +130,46 @@ app.get('/api/chart/:ticker', async (req,res)=>{
     }
     res.json({market:m,tf,step,start,end,source,truncated,candles});
   }catch(e){res.status(500).json({error:e.message});}
+});
+
+// Server-sent events bridge. The browser never sees the Kalshi private key.
+app.get('/api/live/:ticker', (req,res)=>{
+  const ticker=String(req.params.ticker||'').toUpperCase();
+  res.setHeader('Content-Type','text/event-stream');
+  res.setHeader('Cache-Control','no-cache, no-transform');
+  res.setHeader('Connection','keep-alive');
+  res.flushHeaders?.();
+  const send=(event,data)=>{ if(!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  if(!API_KEY || !PRIVATE_KEY){ send('status',{status:'unavailable',message:'Add Kalshi API credentials to enable live WebSocket data.'}); return res.end(); }
+
+  let closed=false, ws, reconnectTimer, attempts=0;
+  const connect=()=>{
+    if(closed) return;
+    try{
+      const headers=signHeaders('GET','/trade-api/ws/v2');
+      ws=new WebSocket(WS_URL,{headers});
+      ws.on('open',()=>{
+        attempts=0; send('status',{status:'connected'});
+        ws.send(JSON.stringify({id:1,cmd:'subscribe',params:{channels:['trade','ticker'],market_tickers:[ticker]}}));
+      });
+      ws.on('message',buf=>{
+        let d; try{d=JSON.parse(buf.toString())}catch{return;}
+        if(d.type==='trade') send('trade',d.msg||d);
+        else if(d.type==='ticker') send('ticker',d.msg||d);
+        else if(d.type==='error') send('status',{status:'error',message:d.msg?.msg||'Kalshi WebSocket error'});
+      });
+      ws.on('error',err=>send('status',{status:'error',message:err.message}));
+      ws.on('close',()=>{
+        if(closed)return;
+        send('status',{status:'reconnecting'});
+        const delay=Math.min(15000,1000*Math.pow(2,attempts++));
+        reconnectTimer=setTimeout(connect,delay);
+      });
+    }catch(e){send('status',{status:'error',message:e.message});reconnectTimer=setTimeout(connect,3000);}
+  };
+  const keep=setInterval(()=>{if(!res.writableEnded)res.write(': keepalive\n\n')},15000);
+  req.on('close',()=>{closed=true;clearInterval(keep);clearTimeout(reconnectTimer);try{ws?.close()}catch{}});
+  connect();
 });
 
 app.get('/api/account', async(req,res)=>{
