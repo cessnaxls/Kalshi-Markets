@@ -48,19 +48,3 @@ Then open `http://localhost:3000`.
 
 ## Security
 Never commit your private key. `.gitignore` excludes `.env` and key files. Kalshi credentials are read only by the Node server.
-
-## v5 trading + TA tools
-- SMA 9 / SMA 20 overlays
-- EMA 9 / EMA 21 overlays
-- Bollinger Bands (20, 2σ)
-- Session VWAP overlay
-- RSI(14) lower pane with 70/30 levels
-- MACD-style lower histogram
-- Horizontal support/resistance lines
-- Price-cross alerts
-- Paper market, limit, and stop orders
-- Optional paper take-profit / stop-loss brackets
-- Risk-% position sizing helper
-- Pending paper-order display and cancellation
-
-All execution tools are simulation-only. No endpoint in this build places a live Kalshi order.
