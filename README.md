@@ -1,4 +1,4 @@
-# Kalshi Ticker Terminal v3
+# Kalshi Ticker Terminal v7
 
 An iPad-first, chart-first Kalshi market viewer with real-time candles and a local paper-trading simulator.
 
@@ -13,6 +13,16 @@ An iPad-first, chart-first Kalshi market viewer with real-time candles and a loc
 - Paper trading with $10,000 fake starting cash, BUY/SELL for the selected YES or NO contract, positions, equity, unrealized P/L, and reset.
 - Paper buys fill at the displayed ask and sells fill at the displayed bid. No real Kalshi orders are ever submitted.
 - Server-side RSA-PSS authentication keeps the Kalshi private key off the browser/iPad.
+
+
+## v7: Kalshi-style market browser + light mode
+
+- **Browse Markets** opens inside the existing fixed iPad viewport; it does not make the app taller or wider.
+- Browse cards are event-first, similar to Kalshi's public Browse experience: category, event title, leading outcomes, implied YES percentage, event volume, and market count.
+- Filters: **Trending** (approximated from public API volume), **Closing soon**, **New**, dynamic category chips, and text search.
+- Tap any outcome to close Browse and open its exact market ticker in the existing chart terminal.
+- Added a persistent **Light / Dark** theme toggle. The selected mode is stored locally and also re-themes the Lightweight Charts canvas.
+- Browsing uses Kalshi's `/events` endpoint with nested open markets; direct ticker search remains available.
 
 ## Deploy on Render
 1. Create a GitHub repository and upload the contents of this folder.

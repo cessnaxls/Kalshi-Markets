@@ -50,6 +50,63 @@ async function kget(path, query = {}) {
 
 app.get('/api/health', (req,res)=>res.json({ok:true, env, linked:Boolean(API_KEY && PRIVATE_KEY), realtime:Boolean(API_KEY && PRIVATE_KEY)}));
 
+
+function marketYesPct(m){
+  const vals=[m.yes_ask_dollars,m.yes_bid_dollars,m.last_price_dollars];
+  for(const v of vals){const n=Number(v);if(Number.isFinite(n))return Math.max(0,Math.min(100,n*100));}
+  for(const v of [m.yes_ask,m.yes_bid,m.last_price]){const n=Number(v);if(Number.isFinite(n))return Math.max(0,Math.min(100,n));}
+  return null;
+}
+function marketVolume(m){
+  const n=Number(m.volume_fp ?? m.volume ?? 0); return Number.isFinite(n)?n:0;
+}
+function browseEvent(e){
+  const markets=(e.markets||[]).filter(m=>String(m.status||'open').toLowerCase()!=='settled');
+  const outcomes=markets.map(m=>({
+    ticker:m.ticker,
+    label:m.yes_sub_title || m.subtitle || m.title || m.ticker,
+    no_label:m.no_sub_title || 'No',
+    yes_pct:marketYesPct(m),
+    volume:marketVolume(m),
+    close_time:m.close_time || m.latest_expiration_time || null
+  })).sort((a,b)=>(b.volume-a.volume)||((b.yes_pct??-1)-(a.yes_pct??-1)));
+  return {
+    event_ticker:e.event_ticker,
+    series_ticker:e.series_ticker,
+    title:e.title || e.event_ticker,
+    subtitle:e.sub_title || '',
+    category:e.category || 'Other',
+    strike_date:e.strike_date || null,
+    markets_count:markets.length,
+    volume:markets.reduce((a,m)=>a+marketVolume(m),0),
+    close_time:markets.map(m=>m.close_time||m.latest_expiration_time).filter(Boolean).sort()[0]||null,
+    outcomes:outcomes.slice(0,4)
+  };
+}
+app.get('/api/browse', async (req,res)=>{
+  try{
+    const wantedCategory=String(req.query.category||'').trim().toLowerCase();
+    const q=String(req.query.q||'').trim().toLowerCase();
+    const sort=String(req.query.sort||'trending');
+    let cursor='', events=[];
+    // Kalshi caps /events at 200. Two pages gives the browser broad coverage without
+    // making every drawer open excessively expensive.
+    for(let page=0;page<2;page++){
+      const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true});
+      events.push(...(d.events||[])); cursor=d.cursor||''; if(!cursor)break;
+    }
+    let cards=events.map(browseEvent).filter(e=>e.markets_count>0);
+    const categories=[...new Set(cards.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    if(wantedCategory && wantedCategory!=='all') cards=cards.filter(e=>e.category.toLowerCase()===wantedCategory);
+    if(q) cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...e.outcomes.map(o=>o.label)].some(v=>String(v||'').toLowerCase().includes(q)));
+    const now=Date.now();
+    if(sort==='closing') cards.sort((a,b)=>(new Date(a.close_time||8640000000000000)-new Date(b.close_time||8640000000000000)));
+    else if(sort==='new') cards.sort((a,b)=>new Date(b.strike_date||0)-new Date(a.strike_date||0));
+    else cards.sort((a,b)=>b.volume-a.volume); // volume is the best public API approximation to trending
+    res.json({events:cards.slice(0,160),categories,sort,generated_at:new Date(now).toISOString()});
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
 app.get('/api/markets', async (req,res)=>{
   try {
     const q = req.query.q?.toString().toLowerCase() || '';
