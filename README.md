@@ -19,7 +19,7 @@ An iPad-first, chart-first Kalshi market viewer with real-time candles and a loc
 
 - **Browse Markets** opens inside the existing fixed iPad viewport; it does not make the app taller or wider.
 - Browse cards are event-first, similar to Kalshi's public Browse experience: category, event title, leading outcomes, implied YES percentage, event volume, and market count.
-- Filters: **Trending** (approximated from public API volume), **Closing soon**, **New**, dynamic category chips, and text search.
+- Filters: **Live now**, **Trending** (approximated from public API volume), **Closing soon**, **New**, dynamic category chips, and text search. Live now uses explicit live metadata when present and otherwise a conservative occurrence/start-time-to-close-time window.
 - Tap any outcome to close Browse and open its exact market ticker in the existing chart terminal.
 - Added a persistent **Light / Dark** theme toggle. The selected mode is stored locally and also re-themes the Lightweight Charts canvas.
 - Browsing uses Kalshi's `/events` endpoint with nested open markets; direct ticker search remains available.

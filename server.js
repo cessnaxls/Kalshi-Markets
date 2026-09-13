@@ -60,7 +60,21 @@ function marketYesPct(m){
 function marketVolume(m){
   const n=Number(m.volume_fp ?? m.volume ?? 0); return Number.isFinite(n)?n:0;
 }
-function browseEvent(e){
+function truthyLive(v){
+  if(v===true||v===1)return true;
+  const s=String(v??'').trim().toLowerCase();
+  return ['true','1','live','in_progress','in-progress','ongoing','started'].includes(s);
+}
+function marketIsLive(m,now=Date.now()){
+  // Prefer an explicit live/in-progress flag if Kalshi includes one in product metadata.
+  if(truthyLive(m.is_live)||truthyLive(m.live)||truthyLive(m.in_progress)||truthyLive(m.product_metadata?.is_live)||truthyLive(m.product_metadata?.live)) return true;
+  // Public market objects expose occurrence_datetime. For scheduled events (especially sports),
+  // treat the period from the occurrence/start time until market close as "Live now".
+  const start=Date.parse(m.occurrence_datetime||'');
+  const end=Date.parse(m.close_time||m.latest_expiration_time||'');
+  return Number.isFinite(start)&&start<=now&&(!Number.isFinite(end)||now<end);
+}
+function browseEvent(e,now=Date.now()){
   const markets=(e.markets||[]).filter(m=>String(m.status||'open').toLowerCase()!=='settled');
   const outcomes=markets.map(m=>({
     ticker:m.ticker,
@@ -68,7 +82,9 @@ function browseEvent(e){
     no_label:m.no_sub_title || 'No',
     yes_pct:marketYesPct(m),
     volume:marketVolume(m),
-    close_time:m.close_time || m.latest_expiration_time || null
+    close_time:m.close_time || m.latest_expiration_time || null,
+    occurrence_datetime:m.occurrence_datetime || null,
+    is_live:marketIsLive(m,now)
   })).sort((a,b)=>(b.volume-a.volume)||((b.yes_pct??-1)-(a.yes_pct??-1)));
   return {
     event_ticker:e.event_ticker,
@@ -80,6 +96,7 @@ function browseEvent(e){
     markets_count:markets.length,
     volume:markets.reduce((a,m)=>a+marketVolume(m),0),
     close_time:markets.map(m=>m.close_time||m.latest_expiration_time).filter(Boolean).sort()[0]||null,
+    is_live:outcomes.some(o=>o.is_live),
     outcomes:outcomes.slice(0,4)
   };
 }
@@ -88,6 +105,7 @@ app.get('/api/browse', async (req,res)=>{
     const wantedCategory=String(req.query.category||'').trim().toLowerCase();
     const q=String(req.query.q||'').trim().toLowerCase();
     const sort=String(req.query.sort||'trending');
+    const liveOnly=['1','true','yes','live'].includes(String(req.query.live||'').toLowerCase());
     let cursor='', events=[];
     // Kalshi caps /events at 200. Two pages gives the browser broad coverage without
     // making every drawer open excessively expensive.
@@ -95,15 +113,16 @@ app.get('/api/browse', async (req,res)=>{
       const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true});
       events.push(...(d.events||[])); cursor=d.cursor||''; if(!cursor)break;
     }
-    let cards=events.map(browseEvent).filter(e=>e.markets_count>0);
+    const now=Date.now();
+    let cards=events.map(e=>browseEvent(e,now)).filter(e=>e.markets_count>0);
     const categories=[...new Set(cards.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     if(wantedCategory && wantedCategory!=='all') cards=cards.filter(e=>e.category.toLowerCase()===wantedCategory);
     if(q) cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...e.outcomes.map(o=>o.label)].some(v=>String(v||'').toLowerCase().includes(q)));
-    const now=Date.now();
+    if(liveOnly) cards=cards.filter(e=>e.is_live);
     if(sort==='closing') cards.sort((a,b)=>(new Date(a.close_time||8640000000000000)-new Date(b.close_time||8640000000000000)));
     else if(sort==='new') cards.sort((a,b)=>new Date(b.strike_date||0)-new Date(a.strike_date||0));
     else cards.sort((a,b)=>b.volume-a.volume); // volume is the best public API approximation to trending
-    res.json({events:cards.slice(0,160),categories,sort,generated_at:new Date(now).toISOString()});
+    res.json({events:cards.slice(0,160),categories,sort,live:liveOnly,generated_at:new Date(now).toISOString()});
   }catch(e){res.status(500).json({error:e.message});}
 });
 
