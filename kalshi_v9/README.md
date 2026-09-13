@@ -72,11 +72,11 @@ The EDGE overlay keeps the terminal dimensions unchanged and adds:
 
 Kalshi order books expose YES and NO bid levels. The app derives the displayed contract's ask ladder from the complementary side, then calculates imbalance over the best five bid/ask levels.
 
-## v9 market-browser fixes
-- Walks Kalshi `/events` cursor pagination until exhausted instead of stopping after two pages.
-- Requests nested markets plus milestones and uses event/market metadata, milestones, occurrence times, and event timing to identify currently-live events.
-- Shows the detected live-market count directly on the Live filter chip.
-- Live filtering keeps only live outcomes inside a live event.
-- Event cards expose every underlying market with an expandable “Show all N markets” control rather than silently truncating at four outcomes.
-- Browse results are paged 60 event cards at a time with a Load more control, while filtering/searching runs against the complete open-event catalog.
-- Open-event catalog is cached for 20 seconds to keep repeated filtering responsive.
+## v9 live-market browser fix
+
+- **Live now now shows every open child market for a live event**, not just the four-market preview used by ordinary browsing.
+- A live sports event propagates live status to its still-open child props/markets when any child establishes that the event is in progress. This avoids missing props whose nested market metadata omits or varies the occurrence timestamp.
+- The browser now walks the complete cursor-paginated open-event catalog rather than stopping after two API pages.
+- The catalog response is cached for 15 seconds so category/search changes do not repeatedly download the full catalog.
+- Live Browse displays an explicit count such as `142 live markets across 2 live events`, plus how many open events were scanned.
+- Live event cards list all returned live child markets and remain scrollable inside the existing fixed iPad terminal footprint.

@@ -65,74 +65,33 @@ function truthyLive(v){
   const s=String(v??'').trim().toLowerCase();
   return ['true','1','live','in_progress','in-progress','ongoing','started'].includes(s);
 }
-function objectSaysLive(x){
-  if(!x||typeof x!=='object')return false;
-  return truthyLive(x.is_live)||truthyLive(x.live)||truthyLive(x.in_progress)||truthyLive(x.status)||truthyLive(x.state);
-}
-function timeWindowLive(startValue,endValue,now=Date.now()){
-  const start=Date.parse(startValue||'');
-  const end=Date.parse(endValue||'');
+function marketIsLive(m,now=Date.now()){
+  // Prefer an explicit live/in-progress flag if Kalshi includes one in product metadata.
+  if(truthyLive(m.is_live)||truthyLive(m.live)||truthyLive(m.in_progress)||truthyLive(m.product_metadata?.is_live)||truthyLive(m.product_metadata?.live)) return true;
+  // Public market objects expose occurrence_datetime. For scheduled events (especially sports),
+  // treat the period from the occurrence/start time until market close as "Live now".
+  const start=Date.parse(m.occurrence_datetime||'');
+  const end=Date.parse(m.close_time||m.latest_expiration_time||'');
   return Number.isFinite(start)&&start<=now&&(!Number.isFinite(end)||now<end);
 }
-function marketIsOpen(m){
-  const st=String(m.status||'open').toLowerCase();
-  return st==='open'||st==='active'||st==='initialized';
-}
-
-// Browse cache prevents every keystroke/filter toggle from walking the entire Kalshi catalog.
-let browseCache={at:0,events:[],milestones:[]};
-const BROWSE_CACHE_MS=20_000;
-async function getOpenEventCatalog(){
-  const now=Date.now();
-  if(now-browseCache.at<BROWSE_CACHE_MS && browseCache.events.length) return browseCache;
-  let cursor='';
-  const events=[];
-  const milestones=[];
-  const seen=new Set();
-  for(let page=0;page<50;page++){
-    const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true,with_milestones:true});
-    for(const e of d.events||[]){if(!seen.has(e.event_ticker)){seen.add(e.event_ticker);events.push(e);}}
-    milestones.push(...(d.milestones||[]));
-    cursor=d.cursor||'';
-    if(!cursor)break;
-  }
-  browseCache={at:now,events,milestones};
-  return browseCache;
-}
-function buildLiveMilestoneMap(milestones,now=Date.now()){
-  const out=new Map();
-  for(const ms of milestones||[]){
-    if(!timeWindowLive(ms.start_date,ms.end_date,now) && !objectSaysLive(ms)) continue;
-    const tickers=[...(ms.related_event_tickers||[]),...(ms.primary_event_tickers||[])];
-    for(const t of tickers){if(t)out.set(t,ms);}
-  }
-  return out;
-}
-function marketIsLive(m,e,liveMilestones,now=Date.now()){
-  if(objectSaysLive(m)||objectSaysLive(m.product_metadata)||objectSaysLive(e)||objectSaysLive(e?.product_metadata)) return {live:true,reason:'metadata'};
-  if(liveMilestones?.has(e?.event_ticker)) return {live:true,reason:'milestone'};
-  if(timeWindowLive(m.occurrence_datetime,m.close_time||m.latest_expiration_time,now)) return {live:true,reason:'occurrence'};
-  // Some scheduled products expose the start at event level rather than on every market.
-  if(timeWindowLive(e?.strike_date,m.close_time||m.latest_expiration_time,now)) return {live:true,reason:'event-time'};
-  return {live:false,reason:null};
-}
-function browseEvent(e,liveMilestones,now=Date.now()){
-  const markets=(e.markets||[]).filter(m=>marketIsOpen(m));
-  const outcomes=markets.map(m=>{
-    const l=marketIsLive(m,e,liveMilestones,now);
-    return {
-      ticker:m.ticker,
-      label:m.yes_sub_title || m.subtitle || m.title || m.ticker,
-      no_label:m.no_sub_title || 'No',
-      yes_pct:marketYesPct(m),
-      volume:marketVolume(m),
-      close_time:m.close_time || m.latest_expiration_time || null,
-      occurrence_datetime:m.occurrence_datetime || null,
-      is_live:l.live,
-      live_reason:l.reason
-    };
-  }).sort((a,b)=>(b.volume-a.volume)||((b.yes_pct??-1)-(a.yes_pct??-1)));
-  const liveOutcomes=outcomes.filter(o=>o.is_live);
+function browseEvent(e,now=Date.now(),includeAllOutcomes=false){
+  const markets=(e.markets||[]).filter(m=>String(m.status||'open').toLowerCase()==='open');
+  const outcomes=markets.map(m=>({
+    ticker:m.ticker,
+    label:m.yes_sub_title || m.subtitle || m.title || m.ticker,
+    no_label:m.no_sub_title || 'No',
+    yes_pct:marketYesPct(m),
+    volume:marketVolume(m),
+    close_time:m.close_time || m.latest_expiration_time || null,
+    occurrence_datetime:m.occurrence_datetime || null,
+    expected_expiration_time:m.expected_expiration_time || null,
+    is_live:marketIsLive(m,now)
+  })).sort((a,b)=>(b.volume-a.volume)||((b.yes_pct??-1)-(a.yes_pct??-1)));
+  // Kalshi's UI treats a sports/event card as live once the underlying event has begun.
+  // Child prop markets do not always carry identical timing metadata, so if any open child
+  // establishes that the event is live, expose every still-open child market as live too.
+  const eventIsLive=outcomes.some(o=>o.is_live);
+  const liveOutcomes=eventIsLive ? outcomes.map(o=>({...o,is_live:true})) : [];
   return {
     event_ticker:e.event_ticker,
     series_ticker:e.series_ticker,
@@ -144,46 +103,56 @@ function browseEvent(e,liveMilestones,now=Date.now()){
     live_markets_count:liveOutcomes.length,
     volume:markets.reduce((a,m)=>a+marketVolume(m),0),
     close_time:markets.map(m=>m.close_time||m.latest_expiration_time).filter(Boolean).sort()[0]||null,
-    is_live:liveOutcomes.length>0,
-    live_reason:liveOutcomes[0]?.live_reason||null,
-    outcomes
+    is_live:eventIsLive,
+    // Ordinary browsing stays compact. Live mode deliberately returns every live child
+    // market so a game with hundreds of props is not misleadingly shown as four rows.
+    outcomes:includeAllOutcomes ? liveOutcomes : outcomes.slice(0,4)
   };
 }
+let browseCache={at:0,events:[]};
+async function getAllOpenBrowseEvents(){
+  const now=Date.now();
+  if(browseCache.events.length && now-browseCache.at<15000) return browseCache.events;
+  let cursor='', events=[];
+  const seenCursors=new Set();
+  for(let page=0;page<50;page++){
+    const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true});
+    events.push(...(d.events||[]));
+    const next=d.cursor||'';
+    if(!next || seenCursors.has(next)) break;
+    seenCursors.add(next); cursor=next;
+  }
+  browseCache={at:now,events};
+  return events;
+}
+
 app.get('/api/browse', async (req,res)=>{
   try{
     const wantedCategory=String(req.query.category||'').trim().toLowerCase();
     const q=String(req.query.q||'').trim().toLowerCase();
     const sort=String(req.query.sort||'trending');
     const liveOnly=['1','true','yes','live'].includes(String(req.query.live||'').toLowerCase());
-    const page=Math.max(1,Number.parseInt(req.query.page||'1',10)||1);
-    const pageSize=Math.max(20,Math.min(100,Number.parseInt(req.query.page_size||'60',10)||60));
-    const catalog=await getOpenEventCatalog();
+    // Fetch the complete open-event cursor set and cache it briefly so category/search
+    // changes do not re-download the whole Kalshi catalog on every tap or keystroke.
+    const events=await getAllOpenBrowseEvents();
     const now=Date.now();
-    const liveMilestones=buildLiveMilestoneMap(catalog.milestones,now);
-    let allCards=catalog.events.map(e=>browseEvent(e,liveMilestones,now)).filter(e=>e.markets_count>0);
-    const categories=[...new Set(allCards.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-    const catalogStats={
-      total_events:allCards.length,
-      total_markets:allCards.reduce((n,e)=>n+e.markets_count,0),
-      live_events:allCards.filter(e=>e.is_live).length,
-      live_markets:allCards.reduce((n,e)=>n+e.live_markets_count,0)
-    };
-    let cards=allCards;
+    let cards=events.map(e=>browseEvent(e,now,liveOnly)).filter(e=>e.markets_count>0);
+    const categories=[...new Set(cards.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     if(wantedCategory && wantedCategory!=='all') cards=cards.filter(e=>e.category.toLowerCase()===wantedCategory);
-    if(q) cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...e.outcomes.flatMap(o=>[o.label,o.ticker])].some(v=>String(v||'').toLowerCase().includes(q)));
-    if(liveOnly){
-      cards=cards.filter(e=>e.is_live).map(e=>({...e,outcomes:e.outcomes.filter(o=>o.is_live),markets_count:e.outcomes.filter(o=>o.is_live).length}));
-    }
+    if(q) cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...e.outcomes.map(o=>o.label)].some(v=>String(v||'').toLowerCase().includes(q)));
+    if(liveOnly) cards=cards.filter(e=>e.is_live && e.live_markets_count>0);
     if(sort==='closing') cards.sort((a,b)=>(new Date(a.close_time||8640000000000000)-new Date(b.close_time||8640000000000000)));
     else if(sort==='new') cards.sort((a,b)=>new Date(b.strike_date||0)-new Date(a.strike_date||0));
-    else cards.sort((a,b)=>b.volume-a.volume);
-    const filteredStats={events:cards.length,markets:cards.reduce((n,e)=>n+e.outcomes.length,0)};
-    const start=(page-1)*pageSize;
-    const pageCards=cards.slice(start,start+pageSize);
+    else cards.sort((a,b)=>b.volume-a.volume); // volume is the best public API approximation to trending
+    const returned=cards.slice(0,liveOnly?500:160);
+    const totalMarkets=returned.reduce((n,e)=>n+e.markets_count,0);
+    const totalLiveMarkets=returned.reduce((n,e)=>n+e.live_markets_count,0);
     res.json({
-      events:pageCards,categories,sort,live:liveOnly,page,page_size:pageSize,
-      has_more:start+pageSize<cards.length,
-      stats:{...catalogStats,filtered_events:filteredStats.events,filtered_markets:filteredStats.markets},
+      events:returned,
+      categories,
+      sort,
+      live:liveOnly,
+      counts:{events:returned.length,markets:totalMarkets,live_markets:totalLiveMarkets,open_events_scanned:events.length},
       generated_at:new Date(now).toISOString()
     });
   }catch(e){res.status(500).json({error:e.message});}
