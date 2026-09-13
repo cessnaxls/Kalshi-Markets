@@ -1,4 +1,4 @@
-# Kalshi Ticker Terminal v7
+# Kalshi Market Terminal v7
 
 An iPad-first, chart-first Kalshi market viewer with real-time candles and a local paper-trading simulator.
 
@@ -80,3 +80,10 @@ Kalshi order books expose YES and NO bid levels. The app derives the displayed c
 - Event cards expose every underlying market with an expandable “Show all N markets” control rather than silently truncating at four outcomes.
 - Browse results are paged 60 event cards at a time with a Load more control, while filtering/searching runs against the complete open-event catalog.
 - Open-event catalog is cached for 20 seconds to keep repeated filtering responsive.
+
+
+## v10 cleanup
+- Removed the direct ticker search box and Go workflow. Markets are opened from Browse.
+- Fixed OHLC so it initializes from the latest candle, updates on live trades, and follows the hovered candle using Lightweight Charts series data.
+- OHLC now identifies the displayed YES/NO side and interval and returns to the latest candle when the pointer leaves the chart.
+- Distribution ZIP is intentionally flat: package.json, server.js, render.yaml, README.md, and public/ live directly at the archive root.
