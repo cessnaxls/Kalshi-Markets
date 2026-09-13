@@ -48,3 +48,16 @@ Then open `http://localhost:3000`.
 
 ## Security
 Never commit your private key. `.gitignore` excludes `.env` and key files. Kalshi credentials are read only by the Node server.
+
+## v6: Order-book edge tools
+
+The EDGE overlay keeps the terminal dimensions unchanged and adds:
+
+- Live top-5 order-book imbalance (OBI) for the currently displayed YES or NO contract.
+- Live microprice, midprice, and microprice edge from Kalshi order-book snapshots/deltas.
+- Strong pressure callout when `|OBI| >= 0.60`.
+- Automatic local signal backtesting at 5s, 15s, 30s, 1m, and 5m horizons.
+- Accuracy, sample count, and average directional move per horizon.
+- Signal statistics are stored only in browser localStorage and can be reset from the EDGE drawer.
+
+Kalshi order books expose YES and NO bid levels. The app derives the displayed contract's ask ladder from the complementary side, then calculates imbalance over the best five bid/ask levels.

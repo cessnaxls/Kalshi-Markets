@@ -66,6 +66,11 @@ app.get('/api/market/:ticker', async (req,res)=>{
   catch(e){res.status(500).json({error:e.message});}
 });
 
+app.get('/api/orderbook/:ticker', async (req,res)=>{
+  try { res.json(await kget('/markets/'+encodeURIComponent(req.params.ticker)+'/orderbook', {depth:100})); }
+  catch(e){res.status(500).json({error:e.message});}
+});
+
 function intervalSeconds(tf){
   const map={"1s":1,"5s":5,"15s":15,"30s":30,"1m":60,"2m":120,"5m":300,"10m":600,"15m":900};
   return map[tf] || 60;
@@ -150,12 +155,14 @@ app.get('/api/live/:ticker', (req,res)=>{
       ws=new WebSocket(WS_URL,{headers});
       ws.on('open',()=>{
         attempts=0; send('status',{status:'connected'});
-        ws.send(JSON.stringify({id:1,cmd:'subscribe',params:{channels:['trade','ticker'],market_tickers:[ticker]}}));
+        ws.send(JSON.stringify({id:1,cmd:'subscribe',params:{channels:['trade','ticker','orderbook_delta'],market_tickers:[ticker]}}));
       });
       ws.on('message',buf=>{
         let d; try{d=JSON.parse(buf.toString())}catch{return;}
         if(d.type==='trade') send('trade',d.msg||d);
         else if(d.type==='ticker') send('ticker',d.msg||d);
+        else if(d.type==='orderbook_snapshot') send('orderbook_snapshot',d.msg||d);
+        else if(d.type==='orderbook_delta') send('orderbook_delta',d.msg||d);
         else if(d.type==='error') send('status',{status:'error',message:d.msg?.msg||'Kalshi WebSocket error'});
       });
       ws.on('error',err=>send('status',{status:'error',message:err.message}));
