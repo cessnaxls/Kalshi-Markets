@@ -8,9 +8,9 @@ app.use(express.json({limit:'1mb'}));
 app.use(express.static('public'));
 
 const env = process.env.KALSHI_ENV === 'demo' ? 'demo' : 'production';
-const BASE = env === 'demo'
+const BASE = process.env.KALSHI_BASE_URL || (env === 'demo'
   ? 'https://external-api.demo.kalshi.co/trade-api/v2'
-  : 'https://external-api.kalshi.com/trade-api/v2';
+  : 'https://external-api.kalshi.com/trade-api/v2');
 const WS_URL = env === 'demo'
   ? 'wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2'
   : 'wss://external-api-ws.kalshi.com/trade-api/ws/v2';
@@ -117,38 +117,33 @@ app.get('/api/browse/event/:eventTicker', async (req,res)=>{
     res.json(card);
   }catch(e){res.status(500).json({error:e.message});}
 });
+app.get('/api/browse/page', async (req,res)=>{
+  try{
+    const cursor=String(req.query.cursor||'');
+    const now=Date.now();
+    // One Kalshi page per browser request. This keeps the UI responsive and avoids
+    // a single long-running request timing out while walking the entire catalog.
+    const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true});
+    const cards=(d.events||[]).map(e=>browseEvent(e,now,false)).filter(e=>e.markets_count>0);
+    res.json({
+      events:cards,
+      cursor:d.cursor||'',
+      event_count:cards.length,
+      market_count:cards.reduce((n,e)=>n+e.markets_count,0),
+      generated_at:new Date(now).toISOString()
+    });
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
+// Backward-compatible quick Browse response: first page only. The v10 browser uses
+// /api/browse/page and progressively walks the cursor itself.
 app.get('/api/browse', async (req,res)=>{
   try{
-    const wantedCategory=String(req.query.category||'').trim().toLowerCase();
-    const q=String(req.query.q||'').trim().toLowerCase();
-    const sort=String(req.query.sort||'trending');
-    const liveOnly=['1','true','yes','live'].includes(String(req.query.live||'').toLowerCase());
-    let cursor='', events=[];
-    const seen=new Set();
-    // Walk the complete cursor chain. v8 stopped after two pages, which could silently
-    // hide open events. The guard prevents a malformed/repeated cursor from looping forever.
-    for(let page=0;page<50;page++){
-      const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true});
-      for(const e of (d.events||[])){
-        const k=e.event_ticker||JSON.stringify(e);
-        if(!seen.has(k)){seen.add(k);events.push(e)}
-      }
-      const next=d.cursor||'';
-      if(!next||next===cursor)break;
-      cursor=next;
-    }
     const now=Date.now();
-    let cards=events.map(e=>browseEvent(e,now,false)).filter(e=>e.markets_count>0);
+    const d=await kget('/events',{limit:200,status:'open',with_nested_markets:true});
+    const cards=(d.events||[]).map(e=>browseEvent(e,now,false)).filter(e=>e.markets_count>0);
     const categories=[...new Set(cards.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-    if(wantedCategory && wantedCategory!=='all') cards=cards.filter(e=>e.category.toLowerCase()===wantedCategory);
-    if(q) cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...e.outcomes.map(o=>o.label)].some(v=>String(v||'').toLowerCase().includes(q)));
-    if(liveOnly) cards=cards.filter(e=>e.is_live);
-    if(sort==='closing') cards.sort((a,b)=>(new Date(a.close_time||8640000000000000)-new Date(b.close_time||8640000000000000)));
-    else if(sort==='new') cards.sort((a,b)=>new Date(b.strike_date||0)-new Date(a.strike_date||0));
-    else cards.sort((a,b)=>b.volume-a.volume); // public volume is our Browse "Trending" approximation
-    const marketCount=cards.reduce((n,e)=>n+e.markets_count,0);
-    const liveMarketCount=cards.reduce((n,e)=>n+(e.is_live?e.markets_count:0),0);
-    res.json({events:cards,categories,sort,live:liveOnly,event_count:cards.length,market_count:marketCount,live_market_count:liveMarketCount,generated_at:new Date(now).toISOString()});
+    res.json({events:cards,categories,cursor:d.cursor||'',event_count:cards.length,market_count:cards.reduce((n,e)=>n+e.markets_count,0),partial:Boolean(d.cursor)});
   }catch(e){res.status(500).json({error:e.message});}
 });
 

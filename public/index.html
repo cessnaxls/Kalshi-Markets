@@ -34,7 +34,7 @@
 <footer class="foot"><span id="source">—</span><span id="range">—</span><span id="notice"></span><button id="resetPaper" class="btn" style="margin-left:auto;height:18px">Reset paper</button></footer>
 </div><script>
 const $=s=>document.querySelector(s);let selected=null,tf='1m',type='candle',side='yes',chart,series,resizeObs,eventSource,lastMarket=null,lastCandle=null,rawCandles=[],indicatorSeries={},priceLines={},liveQuote={yesBid:null,yesAsk:null,last:null},book={yes:new Map(),no:new Map()},lastSignalSample=0;const taOn=new Set();
-const THEME_KEY='kalshi-terminal-theme-v1';let theme=localStorage.getItem(THEME_KEY)||'dark';let browseCategory='all',browseLive=false,browseTimer=null,browseLoaded=false;
+const THEME_KEY='kalshi-terminal-theme-v1';let theme=localStorage.getItem(THEME_KEY)||'dark';let browseCategory='all',browseLive=false,browseTimer=null,browseLoaded=false,browseCatalog=[],browseLoadSeq=0,browseLoading=false;
 function cssVar(name){return getComputedStyle(document.documentElement).getPropertyValue(name).trim()}
 function applyTheme(next,rerender=true){theme=next;document.documentElement.dataset.theme=theme;localStorage.setItem(THEME_KEY,theme);$('#themeBtn').textContent=theme==='light'?'☾':'☀';$('#themeBtn').title=theme==='light'?'Switch to dark mode':'Switch to light mode';if(rerender&&chart){const keep=rawCandles.slice();mkChart();setChartData(keep);chart.timeScale().fitContent()}}
 applyTheme(theme,false);
@@ -42,13 +42,57 @@ function compactNum(v){v=Number(v||0);if(v>=1e9)return '$'+(v/1e9).toFixed(1)+'B
 function escapeHtml(x){return String(x??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]))}
 function openBrowser(){const el=$('#browserOverlay');el.classList.add('open');el.setAttribute('aria-hidden','false');if(!browseLoaded)loadBrowse()}
 function closeBrowser(){const el=$('#browserOverlay');el.classList.remove('open');el.setAttribute('aria-hidden','true')}
-async function loadBrowse(){browseLoaded=true;$('#browseGrid').innerHTML='<div class="browseSkeleton">Loading complete Kalshi catalog…</div>';$('#browseMeta').textContent='Loading all open events and markets…';try{const params=new URLSearchParams({sort:$('#browseSort').value,category:browseCategory,live:browseLive?'1':'0'});const q=$('#browseSearch').value.trim();if(q)params.set('q',q);const r=await fetch('/api/browse?'+params.toString(),{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error||'Could not load markets');renderCategories(d.categories||[]);const ec=Number(d.event_count??(d.events||[]).length),mc=Number(d.market_count??0);$('#browseMeta').innerHTML=`<b>${ec.toLocaleString()}</b> event${ec===1?'':'s'} · <b>${mc.toLocaleString()}</b> open market${mc===1?'':'s'}${browseLive?' currently grouped as LIVE':''}`;renderBrowse(d.events||[])}catch(e){$('#browseMeta').textContent='Catalog load failed';$('#browseGrid').innerHTML=`<div class="browserEmpty">${escapeHtml(e.message)}</div>`}}
-function renderCategories(cats){const rail=$('#categoryRail');rail.innerHTML=`<button class="catChip liveChip ${browseLive?'active':''}" id="liveOnlyChip">● Live now</button><button class="catChip ${browseCategory==='all'?'active':''}" data-cat="all">All categories</button>`+cats.map(c=>`<button class="catChip ${browseCategory===c.toLowerCase()?'active':''}" data-cat="${escapeHtml(c.toLowerCase())}">${escapeHtml(c)}</button>`).join('');$('#liveOnlyChip').onclick=()=>{browseLive=!browseLive;loadBrowse()};rail.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{browseCategory=b.dataset.cat;loadBrowse()})}
+async function loadBrowse(force=false){
+  if(browseLoading&&!force)return;
+  if(browseLoaded&&browseCatalog.length&&!force){applyBrowseFilters();return}
+  browseLoaded=true;browseLoading=true;const seq=++browseLoadSeq;browseCatalog=[];
+  $('#browseGrid').innerHTML='<div class="browseSkeleton">Loading Kalshi markets…</div>';
+  $('#browseMeta').textContent='Loading open markets…';
+  let cursor='',page=0,totalMarkets=0;
+  try{
+    do{
+      const qs=new URLSearchParams();if(cursor)qs.set('cursor',cursor);
+      const r=await fetch('/api/browse/page?'+qs.toString(),{cache:'no-store'});
+      const d=await r.json();if(!r.ok)throw Error(d.error||'Could not load markets');
+      if(seq!==browseLoadSeq)return;
+      browseCatalog.push(...(d.events||[]));page++;totalMarkets+=Number(d.market_count||0);cursor=d.cursor||'';
+      renderCategories([...new Set(browseCatalog.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b)));
+      applyBrowseFilters({loading:true,page,totalMarkets});
+      // Yield between pages so iPad can paint the cards and never appears frozen.
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }while(cursor&&page<50);
+    if(seq!==browseLoadSeq)return;
+    browseLoading=false;applyBrowseFilters({complete:true,page,totalMarkets});
+  }catch(e){
+    if(seq!==browseLoadSeq)return;browseLoading=false;
+    if(browseCatalog.length){applyBrowseFilters({partialError:e.message,page,totalMarkets});}
+    else{$('#browseMeta').textContent='Catalog load failed';$('#browseGrid').innerHTML=`<div class="browserEmpty">${escapeHtml(e.message)} <button class="showAllMarkets" id="browseRetry">Retry</button></div>`;setTimeout(()=>{const b=$('#browseRetry');if(b)b.onclick=()=>loadBrowse(true)},0)}
+  }
+}
+function filteredBrowse(){
+  const q=$('#browseSearch').value.trim().toLowerCase(),sort=$('#browseSort').value;
+  let cards=browseCatalog.slice();
+  if(browseCategory!=='all')cards=cards.filter(e=>String(e.category||'').toLowerCase()===browseCategory);
+  if(browseLive)cards=cards.filter(e=>e.is_live);
+  if(q)cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...(e.outcomes||[]).map(o=>o.label+' '+o.ticker)].some(v=>String(v||'').toLowerCase().includes(q)));
+  if(sort==='closing')cards.sort((a,b)=>(Date.parse(a.close_time||'9999-12-31')||Infinity)-(Date.parse(b.close_time||'9999-12-31')||Infinity));
+  else if(sort==='new')cards.sort((a,b)=>(Date.parse(b.strike_date||0)||0)-(Date.parse(a.strike_date||0)||0));
+  else cards.sort((a,b)=>Number(b.volume||0)-Number(a.volume||0));
+  return cards;
+}
+function applyBrowseFilters(state={}){
+  const cards=filteredBrowse(),mc=cards.reduce((n,e)=>n+Number(e.markets_count||0),0);
+  renderBrowse(cards);
+  if(state.loading)$('#browseMeta').innerHTML=`Loaded <b>${browseCatalog.length.toLocaleString()}</b> events / <b>${state.totalMarkets.toLocaleString()}</b> markets so far · page ${state.page}…`;
+  else if(state.partialError)$('#browseMeta').innerHTML=`Showing partial catalog: <b>${cards.length.toLocaleString()}</b> events · <b>${mc.toLocaleString()}</b> markets · ${escapeHtml(state.partialError)}`;
+  else $('#browseMeta').innerHTML=`<b>${cards.length.toLocaleString()}</b> event${cards.length===1?'':'s'} · <b>${mc.toLocaleString()}</b> open market${mc===1?'':'s'}${browseLive?' marked LIVE':''}`;
+}
+function renderCategories(cats){const rail=$('#categoryRail');rail.innerHTML=`<button class="catChip liveChip ${browseLive?'active':''}" id="liveOnlyChip">● Live now</button><button class="catChip ${browseCategory==='all'?'active':''}" data-cat="all">All categories</button>`+cats.map(c=>`<button class="catChip ${browseCategory===c.toLowerCase()?'active':''}" data-cat="${escapeHtml(c.toLowerCase())}">${escapeHtml(c)}</button>`).join('');$('#liveOnlyChip').onclick=()=>{browseLive=!browseLive;renderCategories(cats);applyBrowseFilters()};rail.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{browseCategory=b.dataset.cat;renderCategories(cats);applyBrowseFilters()})}
 function bindOutcomeButtons(root=document){root.querySelectorAll('[data-open-ticker]').forEach(b=>b.onclick=async()=>{selected=b.dataset.openTicker;$('#search').value=selected;closeBrowser();await loadChart()})}
 function outcomeRows(outcomes){return (outcomes||[]).map(o=>`<button class="outcomeRow" data-open-ticker="${escapeHtml(o.ticker)}"><span class="outcomeName">${escapeHtml(o.label)}<span class="outcomeTicker">${escapeHtml(o.ticker)}</span></span><span class="outcomePrice">${Number.isFinite(Number(o.yes_pct))?Math.round(Number(o.yes_pct))+'%':'—'}</span></button>`).join('')}
 async function expandEvent(btn){const card=btn.closest('.marketCard'),eventTicker=btn.dataset.eventTicker;if(!card||!eventTicker)return;btn.disabled=true;btn.textContent='Loading…';try{const r=await fetch('/api/browse/event/'+encodeURIComponent(eventTicker),{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error||'Could not load event markets');card.querySelector('.outcomeList').innerHTML=outcomeRows(d.outcomes||[]);card.classList.add('expanded');btn.textContent=`Showing all ${(d.outcomes||[]).length}`;btn.disabled=true;bindOutcomeButtons(card)}catch(e){btn.disabled=false;btn.textContent='Retry show all'}}
-function renderBrowse(events){const grid=$('#browseGrid');if(!events.length){grid.innerHTML='<div class="browserEmpty">No open markets match these filters.</div>';return}grid.innerHTML=events.map(e=>`<article class="marketCard" data-event="${escapeHtml(e.event_ticker||'')}"><div class="cardTop"><div class="cardKicker">${escapeHtml(e.category)}${e.series_ticker?' · '+escapeHtml(e.series_ticker):''}</div><div class="cardTitle">${escapeHtml(e.title)}${e.is_live?'<span class=\"liveBadge\">LIVE</span>':''}</div>${e.subtitle?`<div class="cardSub">${escapeHtml(e.subtitle)}</div>`:''}</div><div class="outcomeList">${outcomeRows(e.outcomes||[])}</div><div class="cardFoot"><span>${compactNum(e.volume)} vol · ${e.markets_count} market${e.markets_count===1?'':'s'}</span>${e.markets_count>(e.outcomes||[]).length?`<button class="showAllMarkets" data-event-ticker="${escapeHtml(e.event_ticker)}">Show all ${e.markets_count}</button>`:'<span>All shown</span>'}</div></article>`).join('');bindOutcomeButtons(grid);grid.querySelectorAll('.showAllMarkets').forEach(b=>b.onclick=()=>expandEvent(b))}
-$('#browseBtn').onclick=openBrowser;$('#browserClose').onclick=closeBrowser;$('#themeBtn').onclick=()=>applyTheme(theme==='light'?'dark':'light');$('#browseSort').onchange=loadBrowse;$('#browseSearch').addEventListener('input',()=>{clearTimeout(browseTimer);browseTimer=setTimeout(loadBrowse,300)});
+function renderBrowse(events){const grid=$('#browseGrid');if(!events.length){grid.innerHTML=`<div class="browserEmpty">${browseLoading?'Still loading the catalog…':'No open markets match these filters.'}</div>`;return}grid.innerHTML=events.map(e=>`<article class="marketCard" data-event="${escapeHtml(e.event_ticker||'')}"><div class="cardTop"><div class="cardKicker">${escapeHtml(e.category)}${e.series_ticker?' · '+escapeHtml(e.series_ticker):''}</div><div class="cardTitle">${escapeHtml(e.title)}${e.is_live?'<span class="liveBadge">LIVE</span>':''}</div>${e.subtitle?`<div class="cardSub">${escapeHtml(e.subtitle)}</div>`:''}</div><div class="outcomeList">${outcomeRows(e.outcomes||[])}</div><div class="cardFoot"><span>${compactNum(e.volume)} vol · ${e.markets_count} market${e.markets_count===1?'':'s'}</span>${e.markets_count>(e.outcomes||[]).length?`<button class="showAllMarkets" data-event-ticker="${escapeHtml(e.event_ticker)}">Show all ${e.markets_count}</button>`:'<span>All shown</span>'}</div></article>`).join('');bindOutcomeButtons(grid);grid.querySelectorAll('.showAllMarkets').forEach(b=>b.onclick=()=>expandEvent(b))}
+$('#browseBtn').onclick=openBrowser;$('#browserClose').onclick=closeBrowser;$('#themeBtn').onclick=()=>applyTheme(theme==='light'?'dark':'light');$('#browseSort').onchange=()=>applyBrowseFilters();$('#browseSearch').addEventListener('input',()=>{clearTimeout(browseTimer);browseTimer=setTimeout(()=>applyBrowseFilters(),180)});
 
 const times=['1s','5s','15s','30s','1m','2m','5m','10m','15m'];$('#tfs').innerHTML=times.map(x=>`<button class="btn ${x===tf?'active':''}" data-tf="${x}">${x}</button>`).join('');
 const stepOf=x=>({"1s":1,"5s":5,"15s":15,"30s":30,"1m":60,"2m":120,"5m":300,"10m":600,"15m":900}[x]||60);

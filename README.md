@@ -1,4 +1,18 @@
-# Kalshi Ticker Terminal v7
+# Kalshi Ticker Terminal v10
+
+v10 fixes the Browse loader regression introduced in v9.
+
+## Browse loader fix
+- Loads Kalshi open events one API page at a time instead of holding one long HTTP request open while walking the entire cursor chain.
+- Renders each page progressively, so markets appear immediately while later pages continue loading.
+- Shows live progress counts (events, markets, page number).
+- Keeps already-loaded results visible if a later page fails.
+- Browse category, Live, search, and sort filters now operate locally on the loaded catalog instead of restarting the full network crawl every time.
+- Retry button appears if the very first catalog page fails.
+- Event expansion still lazy-loads all markets for a selected event.
+
+Light/dark mode, charting, paper trading, TA, EDGE/order-book tools, settlement handling, and all prior terminal functionality remain included.
+
 
 An iPad-first, chart-first Kalshi market viewer with real-time candles and a local paper-trading simulator.
 
