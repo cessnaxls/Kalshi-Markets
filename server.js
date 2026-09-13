@@ -74,9 +74,15 @@ function marketIsLive(m,now=Date.now()){
   const end=Date.parse(m.close_time||m.latest_expiration_time||'');
   return Number.isFinite(start)&&start<=now&&(!Number.isFinite(end)||now<end);
 }
-function browseEvent(e,now=Date.now()){
-  const markets=(e.markets||[]).filter(m=>String(m.status||'open').toLowerCase()!=='settled');
-  const outcomes=markets.map(m=>({
+function eventExplicitLive(e){
+  return truthyLive(e?.is_live)||truthyLive(e?.live)||truthyLive(e?.in_progress)||
+    truthyLive(e?.product_metadata?.is_live)||truthyLive(e?.product_metadata?.live)||truthyLive(e?.product_metadata?.in_progress);
+}
+function browseEvent(e,now=Date.now(),includeAll=false){
+  // Browse should represent actually active/tradable markets, not historical nested markets.
+  const markets=(e.markets||[]).filter(m=>String(m.status||'').toLowerCase()==='open');
+  const explicitEventLive=eventExplicitLive(e);
+  const allOutcomes=markets.map(m=>({
     ticker:m.ticker,
     label:m.yes_sub_title || m.subtitle || m.title || m.ticker,
     no_label:m.no_sub_title || 'No',
@@ -84,8 +90,9 @@ function browseEvent(e,now=Date.now()){
     volume:marketVolume(m),
     close_time:m.close_time || m.latest_expiration_time || null,
     occurrence_datetime:m.occurrence_datetime || null,
-    is_live:marketIsLive(m,now)
+    is_live:explicitEventLive || marketIsLive(m,now)
   })).sort((a,b)=>(b.volume-a.volume)||((b.yes_pct??-1)-(a.yes_pct??-1)));
+  const isLive=explicitEventLive || allOutcomes.some(o=>o.is_live);
   return {
     event_ticker:e.event_ticker,
     series_ticker:e.series_ticker,
@@ -94,12 +101,22 @@ function browseEvent(e,now=Date.now()){
     category:e.category || 'Other',
     strike_date:e.strike_date || null,
     markets_count:markets.length,
+    live_markets_count:isLive?markets.length:allOutcomes.filter(o=>o.is_live).length,
     volume:markets.reduce((a,m)=>a+marketVolume(m),0),
     close_time:markets.map(m=>m.close_time||m.latest_expiration_time).filter(Boolean).sort()[0]||null,
-    is_live:outcomes.some(o=>o.is_live),
-    outcomes:outcomes.slice(0,4)
+    is_live:isLive,
+    // Keep the browse payload small; the full event is lazy-loaded when the user expands it.
+    outcomes:includeAll?allOutcomes:allOutcomes.slice(0,4)
   };
 }
+app.get('/api/browse/event/:eventTicker', async (req,res)=>{
+  try{
+    const d=await kget('/events/'+encodeURIComponent(req.params.eventTicker));
+    const e=d.event||d;
+    const card=browseEvent(e,Date.now(),true);
+    res.json(card);
+  }catch(e){res.status(500).json({error:e.message});}
+});
 app.get('/api/browse', async (req,res)=>{
   try{
     const wantedCategory=String(req.query.category||'').trim().toLowerCase();
@@ -107,22 +124,31 @@ app.get('/api/browse', async (req,res)=>{
     const sort=String(req.query.sort||'trending');
     const liveOnly=['1','true','yes','live'].includes(String(req.query.live||'').toLowerCase());
     let cursor='', events=[];
-    // Kalshi caps /events at 200. Two pages gives the browser broad coverage without
-    // making every drawer open excessively expensive.
-    for(let page=0;page<2;page++){
+    const seen=new Set();
+    // Walk the complete cursor chain. v8 stopped after two pages, which could silently
+    // hide open events. The guard prevents a malformed/repeated cursor from looping forever.
+    for(let page=0;page<50;page++){
       const d=await kget('/events',{limit:200,cursor,status:'open',with_nested_markets:true});
-      events.push(...(d.events||[])); cursor=d.cursor||''; if(!cursor)break;
+      for(const e of (d.events||[])){
+        const k=e.event_ticker||JSON.stringify(e);
+        if(!seen.has(k)){seen.add(k);events.push(e)}
+      }
+      const next=d.cursor||'';
+      if(!next||next===cursor)break;
+      cursor=next;
     }
     const now=Date.now();
-    let cards=events.map(e=>browseEvent(e,now)).filter(e=>e.markets_count>0);
+    let cards=events.map(e=>browseEvent(e,now,false)).filter(e=>e.markets_count>0);
     const categories=[...new Set(cards.map(e=>e.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
     if(wantedCategory && wantedCategory!=='all') cards=cards.filter(e=>e.category.toLowerCase()===wantedCategory);
     if(q) cards=cards.filter(e=>[e.title,e.subtitle,e.category,e.event_ticker,e.series_ticker,...e.outcomes.map(o=>o.label)].some(v=>String(v||'').toLowerCase().includes(q)));
     if(liveOnly) cards=cards.filter(e=>e.is_live);
     if(sort==='closing') cards.sort((a,b)=>(new Date(a.close_time||8640000000000000)-new Date(b.close_time||8640000000000000)));
     else if(sort==='new') cards.sort((a,b)=>new Date(b.strike_date||0)-new Date(a.strike_date||0));
-    else cards.sort((a,b)=>b.volume-a.volume); // volume is the best public API approximation to trending
-    res.json({events:cards.slice(0,160),categories,sort,live:liveOnly,generated_at:new Date(now).toISOString()});
+    else cards.sort((a,b)=>b.volume-a.volume); // public volume is our Browse "Trending" approximation
+    const marketCount=cards.reduce((n,e)=>n+e.markets_count,0);
+    const liveMarketCount=cards.reduce((n,e)=>n+(e.is_live?e.markets_count:0),0);
+    res.json({events:cards,categories,sort,live:liveOnly,event_count:cards.length,market_count:marketCount,live_market_count:liveMarketCount,generated_at:new Date(now).toISOString()});
   }catch(e){res.status(500).json({error:e.message});}
 });
 

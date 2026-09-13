@@ -71,3 +71,13 @@ The EDGE overlay keeps the terminal dimensions unchanged and adds:
 - Signal statistics are stored only in browser localStorage and can be reset from the EDGE drawer.
 
 Kalshi order books expose YES and NO bid levels. The app derives the displayed contract's ask ladder from the complementary side, then calculates imbalance over the best five bid/ask levels.
+
+## v9 market-browser completeness fix
+
+- Browse now follows the complete `/events` cursor chain instead of stopping after two pages.
+- Browse counts distinguish **events** from individual **markets/contracts**.
+- The browser header shows `X events · Y open markets` for the current filters.
+- Event cards still use Kalshi-style grouping, but cards with more than four markets now have **Show all N**.
+- Expanding a card lazy-loads `/api/browse/event/:eventTicker` and exposes every currently open market in that event without bloating the initial browser payload.
+- Live filtering remains event-oriented (matching Kalshi's grouped Browse presentation); the market count makes clear how many underlying open markets are inside those live events.
+- Event-level live flags are honored when present, in addition to market occurrence-time inference.
