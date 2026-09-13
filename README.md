@@ -1,18 +1,4 @@
-# Kalshi Ticker Terminal v10
-
-v10 fixes the Browse loader regression introduced in v9.
-
-## Browse loader fix
-- Loads Kalshi open events one API page at a time instead of holding one long HTTP request open while walking the entire cursor chain.
-- Renders each page progressively, so markets appear immediately while later pages continue loading.
-- Shows live progress counts (events, markets, page number).
-- Keeps already-loaded results visible if a later page fails.
-- Browse category, Live, search, and sort filters now operate locally on the loaded catalog instead of restarting the full network crawl every time.
-- Retry button appears if the very first catalog page fails.
-- Event expansion still lazy-loads all markets for a selected event.
-
-Light/dark mode, charting, paper trading, TA, EDGE/order-book tools, settlement handling, and all prior terminal functionality remain included.
-
+# Kalshi Ticker Terminal v7
 
 An iPad-first, chart-first Kalshi market viewer with real-time candles and a local paper-trading simulator.
 
@@ -86,12 +72,11 @@ The EDGE overlay keeps the terminal dimensions unchanged and adds:
 
 Kalshi order books expose YES and NO bid levels. The app derives the displayed contract's ask ladder from the complementary side, then calculates imbalance over the best five bid/ask levels.
 
-## v9 market-browser completeness fix
+## v9 live-market browser fix
 
-- Browse now follows the complete `/events` cursor chain instead of stopping after two pages.
-- Browse counts distinguish **events** from individual **markets/contracts**.
-- The browser header shows `X events · Y open markets` for the current filters.
-- Event cards still use Kalshi-style grouping, but cards with more than four markets now have **Show all N**.
-- Expanding a card lazy-loads `/api/browse/event/:eventTicker` and exposes every currently open market in that event without bloating the initial browser payload.
-- Live filtering remains event-oriented (matching Kalshi's grouped Browse presentation); the market count makes clear how many underlying open markets are inside those live events.
-- Event-level live flags are honored when present, in addition to market occurrence-time inference.
+- **Live now now shows every open child market for a live event**, not just the four-market preview used by ordinary browsing.
+- A live sports event propagates live status to its still-open child props/markets when any child establishes that the event is in progress. This avoids missing props whose nested market metadata omits or varies the occurrence timestamp.
+- The browser now walks the complete cursor-paginated open-event catalog rather than stopping after two API pages.
+- The catalog response is cached for 15 seconds so category/search changes do not repeatedly download the full catalog.
+- Live Browse displays an explicit count such as `142 live markets across 2 live events`, plus how many open events were scanned.
+- Live event cards list all returned live child markets and remain scrollable inside the existing fixed iPad terminal footprint.
