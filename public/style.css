@@ -4,3 +4,10 @@
 
 /* v8: dropdowns must render above the chart and remain touch-friendly */
 .toolbar{position:relative;z-index:40}.chartwrap{z-index:1}.chartmenu{z-index:100;touch-action:manipulation}.menutrigger,.indicator,.menuactions button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+
+/* v9: light-mode selection hierarchy */
+body.light button{background:#f3f5f8}
+body.light .active{background:#d9dee6!important;color:#17202b!important;border-color:#c4ccd6!important}
+body.light .seg button:not(.active),body.light .modebtn:not(.active),body.light .tab:not(.active){background:#f3f5f8!important;color:#718096!important}
+body.light .chartmenu .indicator.on{background:#e4e8ed;color:#167a5a}
+body.light .chartmenu .indicator:hover{background:#e9edf2}

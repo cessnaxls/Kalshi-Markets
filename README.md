@@ -23,3 +23,9 @@ Market/chart data defaults to Kalshi production (`KALSHI_DATA_ENV=production`) e
 
 ## v8 changes
 Adds 1s, 5s, 15s, and 30s chart intervals built from actual Kalshi trades. Fixes TA and Trade Tools dropdown clipping/touch behavior by allowing toolbar overflow and raising menu stacking order. Sub-minute history loads up to 5,000 recent trades from the prior 24 hours; no synthetic interpolation is used.
+
+## v9 changes
+- Light mode active/selected controls use a subtle light gray that is darker than unselected controls.
+- Selecting **LIVE** now fetches authenticated Kalshi `/portfolio/balance` data and displays cash, current portfolio value, and total account value from the configured execution environment.
+- Live positions in the right rail are read from the authenticated portfolio positions endpoint.
+- To show your real-money account, set `KALSHI_ENV=production` and use production Kalshi API credentials. `KALSHI_ENV=demo` intentionally shows the demo portfolio instead.
