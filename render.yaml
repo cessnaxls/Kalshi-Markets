@@ -2,9 +2,10 @@ services:
   - type: web
     name: kalshi-edge-terminal
     runtime: node
-    plan: free
+    plan: starter
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
       - key: KALSHI_ENV
         value: demo
@@ -14,3 +15,9 @@ services:
         sync: false
       - key: LIVE_TRADING_ENABLED
         value: "false"
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: terminal-data
+      mountPath: /var/data
+      sizeGB: 1

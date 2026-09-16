@@ -1,134 +1,40 @@
 import express from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import 'dotenv/config';
 
-const app = express();
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static('public'));
+const app=express(); app.use(express.json({limit:'1mb'})); app.use(express.static('public'));
+const ENV=process.env.KALSHI_ENV==='production'?'production':'demo';
+const BASE=ENV==='production'?'https://external-api.kalshi.com/trade-api/v2':'https://external-api.demo.kalshi.co/trade-api/v2';
+const keyId=process.env.KALSHI_API_KEY_ID||''; const privateKey=(process.env.KALSHI_PRIVATE_KEY||'').replace(/\\n/g,'\n');
+const liveServerEnabled=process.env.LIVE_TRADING_ENABLED==='true';
+const DATA_DIR=process.env.DATA_DIR||'/tmp/kalshi-edge'; fs.mkdirSync(DATA_DIR,{recursive:true}); const STATE_FILE=path.join(DATA_DIR,'state.json');
+const defaults={paper:{cash:10000,positions:{},orders:[],realized:0},bot:{enabled:false,mode:'signals',ticker:'',preset:'vwap_reversion',contracts:1,maxExposure:25,maxOrder:5,dailyLoss:10,cooldownSec:60,takeProfitCents:4,stopLossCents:3,maxSpreadCents:4,minVolume:0,lastTradeAt:0,liveArmed:false},log:[]};
+let state=loadState(); function loadState(){try{return {...structuredClone(defaults),...JSON.parse(fs.readFileSync(STATE_FILE,'utf8'))}}catch{return structuredClone(defaults)}} function save(){try{fs.writeFileSync(STATE_FILE,JSON.stringify(state,null,2))}catch{}}
+function log(kind,msg,data={}){state.log.unshift({ts:Date.now(),kind,msg,...data}); state.log=state.log.slice(0,300); save();}
+function authHeaders(method,p){if(!keyId||!privateKey)throw new Error('Kalshi credentials are not configured'); const ts=Date.now().toString(); const full='/trade-api/v2'+p.split('?')[0]; const sig=crypto.sign('sha256',Buffer.from(ts+method.toUpperCase()+full),{key:privateKey,padding:crypto.constants.RSA_PKCS1_PSS_PADDING,saltLength:crypto.constants.RSA_PSS_SALTLEN_DIGEST}).toString('base64'); return {'KALSHI-ACCESS-KEY':keyId,'KALSHI-ACCESS-TIMESTAMP':ts,'KALSHI-ACCESS-SIGNATURE':sig,'Content-Type':'application/json'};}
+async function kalshi(p,{auth=false,method='GET',body}={}){const r=await fetch(BASE+p,{method,headers:auth?authHeaders(method,p):{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}); const text=await r.text(); let d;try{d=JSON.parse(text)}catch{d={raw:text}} if(!r.ok)throw Object.assign(new Error(d?.message||d?.error?.message||`Kalshi ${r.status}`),{status:r.status,data:d}); return d;}
+async function chartData(ticker,days=30){const md=await kalshi('/markets/'+encodeURIComponent(ticker)); const m=md.market; const ev=await kalshi('/events/'+encodeURIComponent(m.event_ticker)); const st=ev.event?.series_ticker;if(!st)throw new Error('No series ticker');const end=Math.floor(Date.now()/1000),start=end-days*86400;const c=await kalshi(`/series/${encodeURIComponent(st)}/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${start}&end_ts=${end}&period_interval=1`);return {...c,market:m,event:ev.event,series_ticker:st};}
+function candles(d){return(d.candlesticks||[]).map(x=>({time:+x.end_period_ts,open:+x.price?.open_dollars,high:+x.price?.high_dollars,low:+x.price?.low_dollars,close:+x.price?.close_dollars,volume:+(x.volume_fp||x.volume||0)})).filter(x=>[x.time,x.open,x.high,x.low,x.close].every(Number.isFinite)).sort((a,b)=>a.time-b.time)}
+function ema(a,n){let e=null,k=2/(n+1);return a.map(x=>e=e==null?x:e+(x-e)*k)} function vwap(cs){let pv=0,v=0;return cs.map(x=>{const z=x.volume||1;pv+=((x.high+x.low+x.close)/3)*z;v+=z;return pv/v})}
+function signalFor(preset,cs,m){if(cs.length<25)return {fire:false,reason:'Need more candles'};const cl=cs.map(x=>x.close),last=cl.at(-1),prev=cl.at(-2),e9=ema(cl,9),e21=ema(cl,21),vw=vwap(cs).at(-1);const bid=+m.yes_bid_dollars,ask=+m.yes_ask_dollars,spread=(ask-bid)*100,vol=cs.slice(-5).reduce((s,x)=>s+x.volume,0);let fire=false,reason='No setup';if(preset==='vwap_reversion'){const dev=(last-vw)*100;fire=dev<=-4;reason=`VWAP deviation ${dev.toFixed(1)}¢`;}if(preset==='momentum'){const move=(last-cl.at(-6))*100;fire=move>=3&&last>e9.at(-1);reason=`5-bar momentum ${move.toFixed(1)}¢`;}if(preset==='ema_cross'){fire=e9.at(-2)<=e21.at(-2)&&e9.at(-1)>e21.at(-1);reason=`EMA9 ${Math.round(e9.at(-1)*100)}¢ / EMA21 ${Math.round(e21.at(-1)*100)}¢`;}if(preset==='breakout'){const hi=Math.max(...cs.slice(-21,-1).map(x=>x.high));fire=last>hi;reason=`Breakout ${Math.round(last*100)}¢ vs ${Math.round(hi*100)}¢`;}if(spread>state.bot.maxSpreadCents)return {fire:false,reason:`Spread ${spread.toFixed(1)}¢ > limit`,last,spread,vol};if(vol<state.bot.minVolume)return {fire:false,reason:`Volume ${vol} < minimum`,last,spread,vol};return {fire,reason,last,spread,vol,vwap:vw,ema9:e9.at(-1),ema21:e21.at(-1)};}
+function paperEquity(){let eq=state.paper.cash;for(const p of Object.values(state.paper.positions)){eq+=p.qty*(p.mark||p.avg)}return eq}
+function paperBuy(ticker,side,count,px){const cost=count*px;if(cost>state.paper.cash)throw new Error('Insufficient paper cash');const k=ticker+':'+side,p=state.paper.positions[k]||{ticker,side,qty:0,avg:0,mark:px};p.avg=((p.avg*p.qty)+(px*count))/(p.qty+count);p.qty+=count;p.mark=px;state.paper.cash-=cost;state.paper.positions[k]=p;state.paper.orders.unshift({ts:Date.now(),ticker,side,action:'BUY',count,price:px});save();}
+async function liveOrder(ticker,count,price){const body={ticker,client_order_id:crypto.randomUUID(),side:'bid',count:Number(count).toFixed(2),price:Number(price).toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',cancel_order_on_pause:true,reduce_only:false,subaccount:0,exchange_index:0};return kalshi('/portfolio/events/orders',{auth:true,method:'POST',body});}
+let botBusy=false;async function botTick(){if(botBusy||!state.bot.enabled||!state.bot.ticker)return;botBusy=true;try{const d=await chartData(state.bot.ticker,7),cs=candles(d),m=d.market,s=signalFor(state.bot.preset,cs,m);log('scan',s.reason,{ticker:m.ticker,fire:s.fire});if(!s.fire||state.bot.mode==='signals')return;const now=Date.now();if(now-state.bot.lastTradeAt<state.bot.cooldownSec*1000)return;const count=Math.min(Math.max(1,+state.bot.contracts||1),Math.max(1,+state.bot.maxOrder||1));const ask=+m.yes_ask_dollars;if(!Number.isFinite(ask)||ask<=0||ask>=1)return;if(count*ask>state.bot.maxExposure){log('risk','Blocked: max exposure',{ticker:m.ticker});return;}if(state.bot.mode==='paper'){paperBuy(m.ticker,'YES',count,ask);state.bot.lastTradeAt=now;log('fill',`PAPER BUY ${count} YES @ ${Math.round(ask*100)}¢`,{ticker:m.ticker});}else if(state.bot.mode==='live'){if(!liveServerEnabled||!state.bot.liveArmed){log('risk','Live signal blocked: live trading not armed',{ticker:m.ticker});return;}const r=await liveOrder(m.ticker,count,ask);state.bot.lastTradeAt=now;log('order',`LIVE BUY ${count} YES @ ${Math.round(ask*100)}¢`,{ticker:m.ticker,orderId:r.order_id});}save();}catch(e){log('error',e.message)}finally{botBusy=false}}
+setInterval(botTick,10000);
 
-const ENV = process.env.KALSHI_ENV === 'production' ? 'production' : 'demo';
-const BASE = ENV === 'production'
-  ? 'https://external-api.kalshi.com/trade-api/v2'
-  : 'https://external-api.demo.kalshi.co/trade-api/v2';
-const keyId = process.env.KALSHI_API_KEY_ID || '';
-const privateKey = (process.env.KALSHI_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-const liveServerEnabled = process.env.LIVE_TRADING_ENABLED === 'true';
-
-function authHeaders(method, path) {
-  if (!keyId || !privateKey) throw new Error('Kalshi credentials are not configured on the server');
-  const ts = Date.now().toString();
-  const fullPath = '/trade-api/v2' + path.split('?')[0];
-  const sig = crypto.sign(
-    'sha256',
-    Buffer.from(ts + method.toUpperCase() + fullPath),
-    { key: privateKey, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST }
-  ).toString('base64');
-  return {
-    'KALSHI-ACCESS-KEY': keyId,
-    'KALSHI-ACCESS-TIMESTAMP': ts,
-    'KALSHI-ACCESS-SIGNATURE': sig,
-    'Content-Type': 'application/json'
-  };
-}
-
-async function kalshi(path, { auth = false, method = 'GET', body } = {}) {
-  const headers = auth ? authHeaders(method, path) : { 'Content-Type': 'application/json' };
-  const r = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  const text = await r.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!r.ok) {
-    const msg = data?.message || data?.error?.message || data?.error || `Kalshi ${r.status}`;
-    throw Object.assign(new Error(typeof msg === 'string' ? msg : JSON.stringify(msg)), { status: r.status, data });
-  }
-  return data;
-}
-
-app.get('/api/config', (req, res) => res.json({
-  environment: ENV,
-  credentialsConfigured: !!(keyId && privateKey),
-  liveServerEnabled
-}));
-
-app.get('/api/markets', async (req, res) => {
-  try {
-    const p = new URLSearchParams({
-      limit: String(Math.min(Number(req.query.limit) || 100, 1000)),
-      status: req.query.status || 'open'
-    });
-    if (req.query.cursor) p.set('cursor', req.query.cursor);
-    if (req.query.event_ticker) p.set('event_ticker', req.query.event_ticker);
-    res.json(await kalshi('/markets?' + p));
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
-
-app.get('/api/market/:ticker', async (req, res) => {
-  try { res.json(await kalshi('/markets/' + encodeURIComponent(req.params.ticker))); }
-  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
-
-app.get('/api/event/:eventTicker', async (req, res) => {
-  try { res.json(await kalshi('/events/' + encodeURIComponent(req.params.eventTicker))); }
-  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
-
-// Robust chart endpoint: resolves the market -> event -> series automatically.
-app.get('/api/chart/:ticker', async (req, res) => {
-  try {
-    const ticker = req.params.ticker;
-    const marketData = await kalshi('/markets/' + encodeURIComponent(ticker));
-    const market = marketData.market;
-    if (!market?.event_ticker) throw new Error('Market did not return an event ticker');
-    const eventData = await kalshi('/events/' + encodeURIComponent(market.event_ticker));
-    const seriesTicker = eventData.event?.series_ticker;
-    if (!seriesTicker) throw new Error('Event did not return a series ticker');
-
-    const period = [1, 60, 1440].includes(Number(req.query.period)) ? Number(req.query.period) : 1;
-    const now = Math.floor(Date.now() / 1000);
-    const end = Number(req.query.end) || now;
-    const start = Number(req.query.start) || (end - 30 * 86400);
-    const path = `/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${start}&end_ts=${end}&period_interval=${period}`;
-    const candles = await kalshi(path);
-    res.json({ ...candles, market, event: eventData.event, series_ticker: seriesTicker });
-  } catch (e) { res.status(e.status || 500).json({ error: e.message, detail: e.data }); }
-});
-
-app.get('/api/orderbook/:ticker', async (req, res) => {
-  try { res.json(await kalshi('/markets/' + encodeURIComponent(req.params.ticker) + '/orderbook?depth=20')); }
-  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
-
-app.get('/api/account', async (req, res) => {
-  try {
-    const [balance, positions, orders] = await Promise.all([
-      kalshi('/portfolio/balance', { auth: true }),
-      kalshi('/portfolio/positions?limit=1000', { auth: true }),
-      kalshi('/portfolio/orders?limit=1000', { auth: true })
-    ]);
-    res.json({ balance, positions, orders });
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
-});
-
-app.post('/api/live/order', async (req, res) => {
-  try {
-    if (!liveServerEnabled) return res.status(403).json({ error: 'LIVE_TRADING_ENABLED is false on server' });
-    if (req.body.confirm !== 'PLACE LIVE ORDER') return res.status(400).json({ error: 'Explicit confirmation missing' });
-    const { ticker, action, side, count, price } = req.body;
-    if (!ticker || !['buy', 'sell'].includes(action) || !['yes', 'no'].includes(side) || !(Number(count) > 0) || !(Number(price) > 0 && Number(price) < 1)) {
-      return res.status(400).json({ error: 'Invalid order' });
-    }
-    const payload = {
-      ticker,
-      action,
-      side,
-      count: Math.floor(Number(count)),
-      type: 'limit',
-      client_order_id: crypto.randomUUID(),
-      [side + '_price']: Math.round(Number(price) * 100)
-    };
-    res.json(await kalshi('/portfolio/orders', { auth: true, method: 'POST', body: payload }));
-  } catch (e) { res.status(e.status || 500).json({ error: e.message, detail: e.data }); }
-});
-
-app.get('/api/health', (req, res) => res.json({ ok: true, environment: ENV }));
-app.listen(process.env.PORT || 3000, () => console.log(`Kalshi Edge Terminal running (${ENV})`));
+app.get('/api/config',(q,r)=>r.json({environment:ENV,credentialsConfigured:!!(keyId&&privateKey),liveServerEnabled}));
+app.get('/api/markets',async(q,r)=>{try{const p=new URLSearchParams({limit:String(Math.min(+q.query.limit||100,1000)),status:q.query.status||'open'});r.json(await kalshi('/markets?'+p))}catch(e){r.status(e.status||500).json({error:e.message})}});
+app.get('/api/market/:ticker',async(q,r)=>{try{r.json(await kalshi('/markets/'+encodeURIComponent(q.params.ticker)))}catch(e){r.status(e.status||500).json({error:e.message})}});
+app.get('/api/chart/:ticker',async(q,r)=>{try{const d=await chartData(q.params.ticker,+q.query.days||45);r.json(d)}catch(e){r.status(e.status||500).json({error:e.message})}});
+app.get('/api/account',async(q,r)=>{try{r.json({balance:await kalshi('/portfolio/balance',{auth:true}),positions:await kalshi('/portfolio/positions?limit=1000',{auth:true}),orders:await kalshi('/portfolio/orders?limit=1000',{auth:true})})}catch(e){r.status(e.status||500).json({error:e.message})}});
+app.get('/api/state',(q,r)=>r.json({...state,paper:{...state.paper,equity:paperEquity()}}));
+app.post('/api/paper/order',(q,r)=>{try{const {ticker,side='YES',count=1,price}=q.body;paperBuy(ticker,side,Math.floor(+count),+price);log('fill',`PAPER BUY ${count} ${side} @ ${Math.round(price*100)}¢`,{ticker});r.json({ok:true,paper:state.paper})}catch(e){r.status(400).json({error:e.message})}});
+app.post('/api/paper/reset',(q,r)=>{state.paper=structuredClone(defaults.paper);save();r.json({ok:true})});
+app.post('/api/bot',(q,r)=>{const b=q.body||{};state.bot={...state.bot,...b};if(!['signals','paper','live'].includes(state.bot.mode))state.bot.mode='signals';if(state.bot.mode==='live'&&!liveServerEnabled)state.bot.enabled=false;if(state.bot.liveArmed&&b.armPhrase!=='ARM LIVE BOT')state.bot.liveArmed=false;delete state.bot.armPhrase;save();log('system',state.bot.enabled?`Bot started (${state.bot.mode})`:'Bot stopped');r.json({bot:state.bot})});
+app.post('/api/live/order',async(q,r)=>{try{if(!liveServerEnabled)return r.status(403).json({error:'LIVE_TRADING_ENABLED is false'});if(q.body.confirm!=='PLACE LIVE ORDER')return r.status(400).json({error:'Explicit confirmation missing'});r.json(await liveOrder(q.body.ticker,Math.floor(+q.body.count),+q.body.price))}catch(e){r.status(e.status||500).json({error:e.message})}});
+app.post('/api/kill',(q,r)=>{state.bot.enabled=false;state.bot.liveArmed=false;save();log('system','KILL BOT activated');r.json({ok:true})});
+app.get('/api/health',(q,r)=>r.json({ok:true,environment:ENV,bot:state.bot.enabled}));
+app.listen(process.env.PORT||3000,()=>console.log(`Kalshi Edge Terminal v6 (${ENV})`));
