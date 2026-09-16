@@ -46,6 +46,24 @@ async function liveOrder(ticker,count,price){const body={ticker,client_order_id:
 let botBusy=false;async function botTick(){if(botBusy||!state.bot.enabled||!state.bot.ticker)return;botBusy=true;try{const d=await chartData(state.bot.ticker,6),cs=candles(d),m=d.market,s=signalFor(state.bot.preset,cs,m);log('scan',s.reason,{ticker:m.ticker,fire:s.fire});if(!s.fire||state.bot.mode==='signals')return;const now=Date.now();if(now-state.bot.lastTradeAt<state.bot.cooldownSec*1000)return;const count=Math.min(Math.max(1,+state.bot.contracts||1),Math.max(1,+state.bot.maxOrder||1));const ask=+m.yes_ask_dollars;if(!Number.isFinite(ask)||ask<=0||ask>=1)return;if(count*ask>state.bot.maxExposure){log('risk','Blocked: max exposure',{ticker:m.ticker});return;}if(state.bot.mode==='paper'){paperBuy(m.ticker,'YES',count,ask);state.bot.lastTradeAt=now;log('fill',`PAPER BUY ${count} YES @ ${Math.round(ask*100)}¢`,{ticker:m.ticker});}else if(state.bot.mode==='live'){if(!liveServerEnabled||!state.bot.liveArmed){log('risk','Live signal blocked: live trading not armed',{ticker:m.ticker});return;}const r=await liveOrder(m.ticker,count,ask);state.bot.lastTradeAt=now;log('order',`LIVE BUY ${count} YES @ ${Math.round(ask*100)}¢`,{ticker:m.ticker,orderId:r.order_id});}save();}catch(e){log('error',e.message)}finally{botBusy=false}}
 setInterval(botTick,10000);
 
+// Near-real-time public market stream. The server polls the public trades/market endpoints
+// and emits only new trades to the browser over SSE, keeping API details off the client.
+app.get('/api/stream/:ticker',(req,res)=>{
+  const ticker=String(req.params.ticker||'').toUpperCase();
+  res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+  let closed=false,lastKey='',busy=false;
+  const send=(event,data)=>{if(!closed){res.write(`event: ${event}\n`);res.write(`data: ${JSON.stringify(data)}\n\n`)}};
+  async function tick(){if(closed||busy)return;busy=true;try{
+    const q=new URLSearchParams({ticker,limit:'100'});const td=await kalshi('/markets/trades?'+q,{data:true});
+    const trades=(td.trades||[]).slice().sort((a,b)=>new Date(a.created_time)-new Date(b.created_time));
+    let start=0;if(lastKey){const i=trades.findIndex(t=>(t.trade_id||`${t.created_time}:${t.yes_price_dollars}:${t.count_fp}`)===lastKey);if(i>=0)start=i+1;else start=Math.max(0,trades.length-1)}
+    const fresh=trades.slice(start);if(fresh.length){const z=fresh.at(-1);lastKey=z.trade_id||`${z.created_time}:${z.yes_price_dollars}:${z.count_fp}`;send('trades',{trades:fresh})}
+    const md=await kalshi('/markets/'+encodeURIComponent(ticker),{data:true});send('quote',{market:md.market,ts:Date.now()});
+  }catch(e){send('stream_error',{error:e.message})}finally{busy=false}}
+  tick();const timer=setInterval(tick,1000);const ping=setInterval(()=>{if(!closed)res.write(': ping\n\n')},15000);
+  req.on('close',()=>{closed=true;clearInterval(timer);clearInterval(ping)});
+});
+
 app.get('/api/config',(q,r)=>r.json({environment:execEnv(),dataEnvironment:DATA_ENV,credentialsConfigured:!!(keyId&&privateKey),credentialSource:(keyId&&privateKey)?(runtimeEnv?'runtime':'render-env'):'none',liveServerEnabled}));
 app.post('/api/config/credentials',async(q,r)=>{try{const env=String(q.body.environment||'demo').toLowerCase();if(!['demo','production'].includes(env))return r.status(400).json({error:'Environment must be demo or production'});const kid=String(q.body.keyId||'').trim();const pk=String(q.body.privateKey||'').replace(/\\n/g,'\n').trim();if(!kid||!pk)return r.status(400).json({error:'API Key ID and private key are required'});const old={keyId,privateKey,runtimeEnv};keyId=kid;privateKey=pk;runtimeEnv=env;try{const balance=await kalshi('/portfolio/balance',{auth:true});r.json({ok:true,environment:execEnv(),balance});}catch(e){keyId=old.keyId;privateKey=old.privateKey;runtimeEnv=old.runtimeEnv;throw e}}catch(e){r.status(e.status||400).json({error:e.message})}});
 app.delete('/api/config/credentials',(q,r)=>{keyId=process.env.KALSHI_API_KEY_ID||'';privateKey=(process.env.KALSHI_PRIVATE_KEY||'').replace(/\\n/g,'\n');runtimeEnv=null;r.json({ok:true,environment:execEnv(),credentialsConfigured:!!(keyId&&privateKey)})});

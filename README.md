@@ -29,3 +29,11 @@ Adds 1s, 5s, 15s, and 30s chart intervals built from actual Kalshi trades. Fixes
 - Selecting **LIVE** now fetches authenticated Kalshi `/portfolio/balance` data and displays cash, current portfolio value, and total account value from the configured execution environment.
 - Live positions in the right rail are read from the authenticated portfolio positions endpoint.
 - To show your real-money account, set `KALSHI_ENV=production` and use production Kalshi API credentials. `KALSHI_ENV=demo` intentionally shows the demo portfolio instead.
+
+## v11 changes
+- Near-real-time chart streaming: the browser opens an SSE stream to the Node server; the server polls Kalshi's public trade feed once per second and pushes only new trades/quotes. Incoming trades mutate the currently forming candle immediately for 1s/5s/15s/30s and keep minute candles current.
+- Expanded TA menu: VWAP, EMA 9/21/50, SMA 20/50, Bollinger Bands 20/2, Donchian 20, volume, RSI 14, MACD 12/26, and ATR 14. Trend/volatility studies draw on-chart; oscillator values appear in the compact status readout.
+- Trade Tools supports Percentage, Risk/Reward, and absolute Price TP/SL modes. R:R mode takes risk % and reward:risk ratio and calculates TP automatically.
+- TP/SL guides are labeled with their percentage distance from entry.
+
+The streaming transport is server-sent events to the browser, backed by one-second server polling of Kalshi public market data. It is near-real-time rather than an exchange WebSocket implementation; this avoids exposing credentials and is compatible with the existing app architecture.
