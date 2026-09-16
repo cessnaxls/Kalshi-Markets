@@ -15,3 +15,7 @@ VWAP Reversion, Momentum, EMA Cross, Breakout. Modes: Signals only, Paper auto, 
 Live bot mode additionally requires the in-app `ARM LIVE BOT` phrase. The KILL button disables the bot and disarms live automation.
 
 Strategy presets are examples, not guarantees of profitable edge. Backtest/paper-test them before live use.
+
+
+## v7 chart fix
+Market/chart data defaults to Kalshi production (`KALSHI_DATA_ENV=production`) even when order execution is configured for demo. This lets the terminal chart current production tickers while you keep real-money execution disabled. The chart uses the batch candlestick endpoint with a bounded six-day 1-minute window and falls back to recent trades if candlesticks fail. TA is now under the chart TA menu and TP/SL/entry guides are under Trade Tools.

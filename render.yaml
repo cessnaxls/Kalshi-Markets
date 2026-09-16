@@ -9,6 +9,8 @@ services:
     envVars:
       - key: KALSHI_ENV
         value: demo
+      - key: KALSHI_DATA_ENV
+        value: production
       - key: KALSHI_API_KEY_ID
         sync: false
       - key: KALSHI_PRIVATE_KEY
