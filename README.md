@@ -1,18 +1,27 @@
-# Kalshi Edge Terminal
+# Kalshi Edge Terminal v5
 
-Render-ready Node web terminal with Kalshi market browser, candlesticks, volume/VWAP/EMA overlays, order book, paper trading, live-order gateway, programmable rule bot, scanner UI, risk controls, and dark/light modes.
+Compact Render-hosted Kalshi chart + paper trading terminal.
 
-## Deploy to Render
-1. Push this folder to a GitHub repo.
-2. Render -> New -> Blueprint -> select repo (`render.yaml` is included).
-3. Start in **demo**. Create a Kalshi demo API key and set `KALSHI_API_KEY_ID` and `KALSHI_PRIVATE_KEY` in Render environment variables.
-4. Keep `LIVE_TRADING_ENABLED=false` while testing. Public market/chart data works without account credentials.
-5. For production, set `KALSHI_ENV=production`, install production credentials, and only then deliberately set `LIVE_TRADING_ENABLED=true`.
+## What changed in v5
+- Much smaller controls and typography, matching the dense organization of the reference app.
+- Fixed chart loading by resolving `market -> event -> series_ticker` server-side before calling Kalshi candlesticks.
+- Current Kalshi candlestick API only supports 1-minute, 1-hour, and 1-day source candles; 5m/10m/15m are aggregated locally from real 1m candles.
+- Browse, ticker load, Candles/Line, YES/NO inversion, timeframes, Fit, TA, Edge panel, theme, paper BUY/SELL, side switcher, reset and market filtering are all wired.
+- Paper state persists in localStorage.
+- Chart CDN has a fallback source.
 
-Live order submission also requires a browser confirmation phrase. Private keys stay server-side and are never returned to the browser.
+## Render
+Use the included `render.yaml`, or deploy as a Node web service:
 
-## Bot expressions
-Expressions can reference: `price`, `vwap`, `ema9`, `ema21`, `volumeRatio`, and `spread`.
-Example: `price <= 0.25 && price > vwap && ema9 > ema21 && spread <= 0.05 && volumeRatio >= 1.25`
+```bash
+npm install
+npm start
+```
 
-The scanner/bot is a strategy execution framework, not a guarantee of positive expected value. Paper-test strategies first.
+Environment variables:
+- `KALSHI_ENV=demo` or `production`
+- `KALSHI_API_KEY_ID` (needed for authenticated account/live routes)
+- `KALSHI_PRIVATE_KEY`
+- `LIVE_TRADING_ENABLED=false` by default
+
+Public chart/market data does not require Kalshi credentials.

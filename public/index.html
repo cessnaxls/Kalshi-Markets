@@ -1,12 +1,88 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>Kalshi Edge Terminal</title><script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js"></script><link rel="stylesheet" href="/style.css"></head><body>
-<header class="top"><button id="browse" class="browse">☰ Browse</button><div class="search"><input id="ticker" placeholder="Kalshi market ticker"><button id="load">Go</button></div><button id="theme" class="square">☾</button><span id="status" class="linked">● READY</span></header>
-<div class="marketHead"><div><b id="mticker">NO MARKET LOADED</b><span id="title">Enter a ticker or browse open markets</span></div><div class="headlinePrice"><strong id="lastPrice">—</strong><small id="quoteLine">YES — / — · NO — / —</small></div></div>
-<div class="app"><section class="workspace">
-<div class="chartbar"><div class="group"><button class="charttype active" data-type="candles">Candles</button><button class="charttype" data-type="line">Line</button></div><div class="group"><button class="contract active" data-contract="YES">YES</button><button class="contract" data-contract="NO">NO</button></div><div class="timeframes" id="timeframes"><button data-tf="1s">1s</button><button data-tf="5s">5s</button><button data-tf="15s">15s</button><button data-tf="30s">30s</button><button class="active" data-tf="1m">1m</button><button data-tf="2m">2m</button><button data-tf="5m">5m</button><button data-tf="10m">10m</button><button data-tf="15m">15m</button><button data-tf="1h">1h</button><button data-tf="1d">1d</button></div><button id="fit" class="fit">Fit</button><span class="live">● LIVE</span></div>
-<div class="chartwrap"><div class="floating"><button id="ta">TA</button><button id="edge">EDGE</button><button id="tradeTools">TRADE TOOLS</button></div><div id="ohlc" class="ohlc">O — &nbsp; H — &nbsp; L — &nbsp; C —</div><div id="chart"></div></div>
-<div class="history"><span id="historyText">Load a market to begin</span><button id="resetPaper">Reset paper</button></div>
-</section>
-<aside class="ticket"><div class="ticketTitle"><b>Paper Trade</b><span>FAKE MONEY</span></div><div id="account" class="account"></div><div class="orderRow"><input id="count" type="number" min="1" value="10"><button class="buy" id="buyYes">BUY YES</button><button class="sell" id="sellYes">SELL YES</button></div><small id="orderHint">YES · simulated only</small><div class="sectionTitle">POSITIONS</div><div id="positions" class="positions">No open paper positions.</div></aside></div>
-<div id="marketDrawer" class="marketDrawer hidden"><div class="drawerTop"><b>Open markets</b><button id="closeMarkets">×</button></div><div id="markets"></div></div>
-<div id="toolsPanel" class="toolsPanel hidden"><div class="drawerTop"><b id="toolsTitle">Technical analysis</b><button id="closeTools">×</button></div><label><input type="checkbox" id="vwap"> VWAP</label><label><input type="checkbox" id="ema9"> EMA 9</label><label><input type="checkbox" id="ema21"> EMA 21</label><div id="indicators"></div></div>
-<script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Kalshi Edge Terminal</title>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js" onerror="this.onerror=null;this.src='https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js'"></script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="browse" class="compact strong">☰ Browse</button>
+    <div class="tickerSearch">
+      <input id="ticker" autocomplete="off" spellcheck="false" placeholder="Kalshi market ticker">
+      <button id="load" class="compact strong">Go</button>
+    </div>
+    <button id="theme" class="iconBtn" title="Toggle theme">☾</button>
+    <span id="connection" class="connection">● checking</span>
+  </header>
+
+  <section class="marketStrip">
+    <div class="marketIdentity">
+      <strong id="mticker">NO MARKET LOADED</strong>
+      <span id="title">Enter a ticker or choose Browse</span>
+    </div>
+    <div class="marketQuote">
+      <strong id="lastPrice">—</strong>
+      <span id="quoteLine">YES — / — · NO — / —</span>
+    </div>
+  </section>
+
+  <main class="terminal">
+    <section class="workspace">
+      <div class="chartToolbar">
+        <div class="seg"><button class="charttype active" data-type="candles">Candles</button><button class="charttype" data-type="line">Line</button></div>
+        <div class="seg"><button class="contract active" data-contract="YES">YES</button><button class="contract" data-contract="NO">NO</button></div>
+        <div class="timeframes" id="timeframes">
+          <button class="active" data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="10m">10m</button><button data-tf="15m">15m</button><button data-tf="1h">1h</button><button data-tf="1d">1d</button>
+        </div>
+        <button id="fit" class="toolBtn">Fit</button>
+        <button id="ta" class="toolBtn">TA</button>
+        <button id="edge" class="toolBtn">Edge</button>
+        <span id="liveLabel" class="liveLabel">● IDLE</span>
+      </div>
+
+      <div class="chartArea">
+        <div id="chart"></div>
+        <div id="chartMessage" class="chartMessage">Load a market to display candles</div>
+        <div id="ohlc" class="ohlc">O — &nbsp; H — &nbsp; L — &nbsp; C —</div>
+      </div>
+
+      <div class="statusbar"><span id="historyText">Ready</span><span id="toast"></span><button id="resetPaper">Reset paper</button></div>
+    </section>
+
+    <aside class="tradePanel">
+      <div class="panelHeader"><strong>Paper Trade</strong><span>SIM</span></div>
+      <div id="account" class="account"></div>
+      <div class="sideTabs"><button class="sideTab active" data-side="YES">YES</button><button class="sideTab" data-side="NO">NO</button></div>
+      <div class="orderForm">
+        <label>Contracts<input id="count" type="number" min="1" step="1" value="10"></label>
+        <div class="actionBtns"><button id="buyBtn" class="buy">BUY YES</button><button id="sellBtn" class="sell">SELL YES</button></div>
+        <div id="orderHint" class="orderHint">Load a market first</div>
+      </div>
+      <div class="sectionLabel">POSITIONS</div>
+      <div id="positions" class="positions">No open paper positions.</div>
+    </aside>
+  </main>
+
+  <div id="marketDrawer" class="drawer hidden">
+    <div class="drawerHeader"><strong>Open markets</strong><button id="closeMarkets">×</button></div>
+    <div id="marketSearchWrap"><input id="marketFilter" placeholder="Filter loaded markets"></div>
+    <div id="markets"></div>
+  </div>
+
+  <div id="toolsPanel" class="tools hidden">
+    <div class="drawerHeader"><strong id="toolsTitle">Technical analysis</strong><button id="closeTools">×</button></div>
+    <div id="taControls">
+      <label><input type="checkbox" id="vwap"> VWAP</label>
+      <label><input type="checkbox" id="ema9"> EMA 9</label>
+      <label><input type="checkbox" id="ema21"> EMA 21</label>
+      <div id="indicators" class="metrics"></div>
+    </div>
+    <div id="edgeView" class="metrics hidden"></div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
