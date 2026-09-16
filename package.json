@@ -1,9 +1,1 @@
-{
-  "name": "kalshi-ticker-terminal",
-  "version": "7.0.0",
-  "private": true,
-  "type": "module",
-  "scripts": {"start":"node server.js"},
-  "dependencies": {"express":"^5.1.0","ws":"^8.18.3"},
-  "engines": {"node": ">=20"}
-}
+{"name":"kalshi-edge-terminal","version":"1.0.0","type":"module","scripts":{"start":"node server.js"},"dependencies":{"express":"^4.21.2","dotenv":"^16.4.7"},"engines":{"node":">=20"}}

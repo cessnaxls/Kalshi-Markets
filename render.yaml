@@ -1,17 +1,16 @@
 services:
   - type: web
-    name: kalshi-ticker-terminal
+    name: kalshi-edge-terminal
     runtime: node
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /api/health
     envVars:
-      - key: NODE_VERSION
-        value: 20
       - key: KALSHI_ENV
-        value: production
+        value: demo
       - key: KALSHI_API_KEY_ID
         sync: false
       - key: KALSHI_PRIVATE_KEY
         sync: false
+      - key: LIVE_TRADING_ENABLED
+        value: "false"
