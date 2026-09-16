@@ -49,6 +49,7 @@ setInterval(botTick,10000);
 app.get('/api/config',(q,r)=>r.json({environment:ENV,dataEnvironment:DATA_ENV,credentialsConfigured:!!(keyId&&privateKey),liveServerEnabled}));
 app.get('/api/markets',async(q,r)=>{try{const p=new URLSearchParams({limit:String(Math.min(+q.query.limit||100,1000)),status:q.query.status||'open'});r.json(await kalshi('/markets?'+p))}catch(e){r.status(e.status||500).json({error:e.message})}});
 app.get('/api/market/:ticker',async(q,r)=>{try{r.json(await kalshi('/markets/'+encodeURIComponent(q.params.ticker)))}catch(e){r.status(e.status||500).json({error:e.message})}});
+app.get('/api/trades/:ticker',async(q,r)=>{try{const ticker=q.params.ticker.toUpperCase();const end=Math.floor(Date.now()/1000);const hours=Math.max(1,Math.min(+q.query.hours||24,72));const start=end-hours*3600;let cursor='',trades=[],pages=0;do{const p=new URLSearchParams({ticker,limit:'1000',min_ts:String(start),max_ts:String(end)});if(cursor)p.set('cursor',cursor);const d=await kalshi('/markets/trades?'+p,{data:true});trades.push(...(d.trades||[]));cursor=d.cursor||'';pages++;}while(cursor&&pages<5);r.json({ticker,trades,cursor,truncated:!!cursor})}catch(e){r.status(e.status||500).json({error:e.message})}});
 app.get('/api/chart/:ticker',async(q,r)=>{try{const d=await chartData(q.params.ticker,+q.query.days||45);r.json(d)}catch(e){r.status(e.status||500).json({error:e.message})}});
 app.get('/api/account',async(q,r)=>{try{r.json({balance:await kalshi('/portfolio/balance',{auth:true}),positions:await kalshi('/portfolio/positions?limit=1000',{auth:true}),orders:await kalshi('/portfolio/orders?limit=1000',{auth:true})})}catch(e){r.status(e.status||500).json({error:e.message})}});
 app.get('/api/state',(q,r)=>r.json({...state,paper:{...state.paper,equity:paperEquity()}}));
@@ -58,4 +59,4 @@ app.post('/api/bot',(q,r)=>{const b=q.body||{};state.bot={...state.bot,...b};if(
 app.post('/api/live/order',async(q,r)=>{try{if(!liveServerEnabled)return r.status(403).json({error:'LIVE_TRADING_ENABLED is false'});if(q.body.confirm!=='PLACE LIVE ORDER')return r.status(400).json({error:'Explicit confirmation missing'});r.json(await liveOrder(q.body.ticker,Math.floor(+q.body.count),+q.body.price))}catch(e){r.status(e.status||500).json({error:e.message})}});
 app.post('/api/kill',(q,r)=>{state.bot.enabled=false;state.bot.liveArmed=false;save();log('system','KILL BOT activated');r.json({ok:true})});
 app.get('/api/health',(q,r)=>r.json({ok:true,environment:ENV,bot:state.bot.enabled}));
-app.listen(process.env.PORT||3000,()=>console.log(`Kalshi Edge Terminal v6 (${ENV})`));
+app.listen(process.env.PORT||3000,()=>console.log(`Kalshi Edge Terminal v8 (${ENV})`));

@@ -19,3 +19,7 @@ Strategy presets are examples, not guarantees of profitable edge. Backtest/paper
 
 ## v7 chart fix
 Market/chart data defaults to Kalshi production (`KALSHI_DATA_ENV=production`) even when order execution is configured for demo. This lets the terminal chart current production tickers while you keep real-money execution disabled. The chart uses the batch candlestick endpoint with a bounded six-day 1-minute window and falls back to recent trades if candlesticks fail. TA is now under the chart TA menu and TP/SL/entry guides are under Trade Tools.
+
+
+## v8 changes
+Adds 1s, 5s, 15s, and 30s chart intervals built from actual Kalshi trades. Fixes TA and Trade Tools dropdown clipping/touch behavior by allowing toolbar overflow and raising menu stacking order. Sub-minute history loads up to 5,000 recent trades from the prior 24 hours; no synthetic interpolation is used.
