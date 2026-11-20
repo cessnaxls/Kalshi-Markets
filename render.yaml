@@ -1,25 +1,8 @@
 services:
   - type: web
-    name: kalshi-edge-terminal
-    runtime: node
-    plan: starter
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /api/health
-    envVars:
-      - key: KALSHI_ENV
-        value: demo
-      - key: KALSHI_DATA_ENV
-        value: production
-      - key: KALSHI_API_KEY_ID
-        sync: false
-      - key: KALSHI_PRIVATE_KEY
-        sync: false
-      - key: LIVE_TRADING_ENABLED
-        value: "false"
-      - key: DATA_DIR
-        value: /var/data
-    disk:
-      name: terminal-data
-      mountPath: /var/data
-      sizeGB: 1
+    name: kalshi-market-terminal
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
