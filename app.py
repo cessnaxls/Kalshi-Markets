@@ -48,3 +48,11 @@ async def history(ticker:str):
         if not cursor or not batch: break
     if cursor and pages>=100: capped=True
     return {'ticker':ticker,'trades':trades,'capped':capped,'pages':pages,'market':market,'start_ts':begin,'end_ts':end}
+
+@app.get('/api/live/{ticker}')
+async def live(ticker: str, since: int = 0):
+    """Incremental executed-trade polling; overlap timestamps for safe client deduplication."""
+    ticker=ticker.upper()
+    now=int(time.time())
+    result=await get('/markets/trades', {'ticker':ticker,'limit':1000,'min_ts':max(0,since-3) if since else now-20,'max_ts':now+2})
+    return {'trades':result.get('trades',[]),'has_more':bool(result.get('cursor')),'server_ts':now}
